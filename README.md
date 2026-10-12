@@ -12,6 +12,9 @@ until you press Apply. It never deletes: removed files go to `_quarantine`.
 There is **no login**. Anyone who can reach the port can scan, apply and empty the
 quarantine. Use it only on a trusted LAN and never expose it to the internet (no port
 forward, no public reverse proxy).
+POSTs whose `Origin` (or `Referer`) names another host:port are refused (403), so a
+web page on another site cannot drive it through your browser. A reverse proxy must
+pass the original `Host` header.
 
 ## Install on Unraid
 
