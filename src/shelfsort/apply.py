@@ -2,11 +2,17 @@
 
 This is the only module that changes the user's files. Files are never
 deleted or overwritten: every move is `os.rename` within one source, onto a
-path verified free (case-insensitively). Only `empty_quarantine` deletes.
+path verified free (case-insensitively). Undo also never deletes or
+overwrites: anything it would displace is moved to `_quarantine/_undone`.
+Only `empty_quarantine` deletes.
 
-Journal layout: one row per operation (`move`, `meta`, `sidecar`) with the
-source NAME in `source` and paths relative to the source root. `move` rows
-carry `old_json` = the files row before the move, so undo can restore it.
+Journal layout: one row per operation (`move`, `meta`) with the source NAME
+in `source` and paths relative to the source root. `old_json` holds:
+- move rows: the files row before the move (file_id, relpath, size, mtime,
+  sha256) so undo can restore it;
+- meta rows: file_id, the expected sidecars with whether each pre-existed,
+  the unique backup_dir (`_quarantine/_originals/b<batch>/j<journal id>`) and
+  the paths written.
 """
 
 from __future__ import annotations
@@ -27,7 +33,6 @@ from shelfsort.writemeta import write_metadata
 
 _QUARANTINE = "_quarantine"
 _ORIGINALS = "_quarantine/_originals"
-_APPLIED = ("organized", "quarantined")
 
 
 @dataclass
@@ -35,6 +40,10 @@ class BatchResult:
     done: int
     skipped: int
     state: str  # done | interrupted
+
+
+class SourceUnavailable(ValueError):
+    """A source the operation touches is not mounted/writable; nothing changed."""
 
 
 def _full(root: str, relpath: str) -> str:
@@ -45,15 +54,30 @@ def _rel(root: str, full: str) -> str:
     return os.path.relpath(full, root).replace(os.sep, "/")
 
 
+def _listing(root: str, relpath: str) -> list[str]:
+    folder = relpath.rpartition("/")[0]
+    try:
+        return os.listdir(_full(root, folder) if folder else root)
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+
+
 def _name_taken(root: str, relpath: str, ignore_name: str | None = None) -> bool:
     """True if a sibling with the same name (case-insensitive) exists."""
-    folder, _, name = relpath.rpartition("/")
-    try:
-        names = os.listdir(_full(root, folder) if folder else root)
-    except (FileNotFoundError, NotADirectoryError):
+    key = relpath.rpartition("/")[2].casefold()
+    return any(n.casefold() == key and n != ignore_name for n in _listing(root, relpath))
+
+
+def _exists_exact(root: str, relpath: str) -> bool:
+    """Exists under exactly this name (case-sensitive, even on case-folding disks)."""
+    return relpath.rpartition("/")[2] in _listing(root, relpath)
+
+
+def _usable(root: str | None) -> bool:
+    if root is None:
         return False
-    key = name.casefold()
-    return any(n.casefold() == key and n != ignore_name for n in names)
+    st = check_source(root)
+    return st.mounted and st.writable
 
 
 # ---------------------------------------------------------------- create
@@ -82,10 +106,12 @@ def create_batch(conn: sqlite3.Connection, scope: dict) -> int:
             (json.dumps(scope), datetime.now(timezone.utc).isoformat()),
         )
         bid = cur.lastrowid
+        ids = [(r["id"],) for r in rows]
         conn.executemany(
             "insert into batch_files(batch_id, file_id) values (?, ?)",
             [(bid, r["id"]) for r in rows],
         )
+        conn.executemany("update files set status = 'planned' where id = ?", ids)
     return bid
 
 
@@ -126,20 +152,30 @@ def _write_meta(conn, batch_id, source, root, f, new_rel, sidecar_all) -> None:
     ident = _best_identity(conn, f["id"])
     if ident is None:
         return
+    stem = os.path.splitext(new_rel)[0]
+    info = {
+        "file_id": f["id"],
+        "sidecars": [
+            {"rel": rel, "existed": os.path.lexists(_full(root, rel))}
+            for rel in (stem + ".opf", stem + ".cover.jpg")
+        ],
+        "written": [],
+    }
+    jid = _journal(conn, batch_id, "meta", source, None, new_rel, "pending", json.dumps(info))
+    info["backup_dir"] = f"{_ORIGINALS}/b{batch_id}/j{jid}"
+    conn.execute("update journal set old_json = ? where id = ?", (json.dumps(info), jid))
+    conn.commit()  # journaled before the file is touched
     try:
-        written = write_metadata(root, new_rel, ident, f["ext"], sidecar_all)
+        written = write_metadata(root, new_rel, ident, f["ext"], sidecar_all,
+                                 backup_dir=info["backup_dir"])
     except Exception:
-        _journal(conn, batch_id, "meta", source, None, new_rel, "failed")
+        conn.execute("update journal set state = 'failed' where id = ?", (jid,))
         _review(conn, "meta_failed", f["id"])
         conn.commit()
         return
-    target_abs = os.path.abspath(_full(root, new_rel))
-    for path in written:
-        rel = _rel(root, path)
-        backup = f"{_ORIGINALS}/{rel}"
-        backup_src = backup if os.path.exists(_full(root, backup)) else None
-        op = "meta" if os.path.abspath(path) == target_abs else "sidecar"
-        _journal(conn, batch_id, op, source, backup_src, rel, "done")
+    info["written"] = [_rel(root, p) for p in written]
+    conn.execute("update journal set state = 'done', old_json = ? where id = ?",
+                 (json.dumps(info), jid))
     conn.commit()
 
 
@@ -168,11 +204,10 @@ def run_batch(conn, batch_id: int, sources: dict[str, str], settings) -> BatchRe
     ).fetchall()
     done = skipped = 0
     for f in rows:
-        if f["status"] in _APPLIED:
-            continue  # applied by an earlier run of this (resumed) batch
-        root = sources[f["source"]]
-        status = check_source(root)
-        if not (status.mounted and status.writable):
+        if f["status"] != "planned":
+            continue  # applied or already skipped by an earlier run of this batch
+        root = sources.get(f["source"])
+        if not _usable(root):
             with conn:
                 conn.execute("update batches set state = 'interrupted' where id = ?", (batch_id,))
             return BatchResult(done, skipped, "interrupted")
@@ -204,6 +239,7 @@ def _apply_entry(conn, batch_id, source, root, f, sidecar_all) -> bool:
     })
     src_rel, dst_rel = f["relpath"], f["target_relpath"]
     quarantine = f["action"] == "quarantine"
+    status = "quarantined" if quarantine else "organized"
     jid = _journal(conn, batch_id, "move", source, src_rel, dst_rel, "pending", old)
     conn.commit()  # journaled before anything touches the disk
     try:
@@ -225,20 +261,38 @@ def _apply_entry(conn, batch_id, source, root, f, sidecar_all) -> bool:
             conn.execute("update files set status = 'review' where id = ?", (f["id"],))
             _review(conn, "move_failed", f["id"])
         return False
-    conn.execute("update journal set state = 'done' where id = ?", (jid,))
-    conn.commit()
+    with conn:  # journal "done" and the files row change together
+        conn.execute("update journal set state = 'done' where id = ?", (jid,))
+        conn.execute("update files set relpath = ?, status = ? where id = ?",
+                     (final, status, f["id"]))
     if f["write_meta"] and not quarantine:
         _write_meta(conn, batch_id, source, root, f, final, sidecar_all)
-    with conn:
-        _update_file_row(conn, f["id"], root, final, "quarantined" if quarantine else "organized")
+    with conn:  # refresh size/mtime/sha after the meta step
+        _update_file_row(conn, f["id"], root, final, status)
     return True
 
 
 # ------------------------------------------------------------------ undo
 
 
-def _copy_over(src: str, dst: str) -> None:
-    """Replace dst with a copy of src atomically (temp copy beside dst)."""
+def _unique(root: str, rel: str) -> str:
+    n, cand = 1, rel
+    while os.path.lexists(_full(root, cand)):
+        n += 1
+        cand = _suffixed(rel, n)
+    return cand
+
+
+def _set_aside(root: str, jid: int, rel: str) -> None:
+    """Move root/rel to _quarantine/_undone/j<jid>/<rel> (never delete)."""
+    dest = _unique(root, f"{_QUARANTINE}/_undone/j{jid}/{rel}")
+    os.makedirs(os.path.dirname(_full(root, dest)), exist_ok=True)
+    os.rename(_full(root, rel), _full(root, dest))
+
+
+def _copy_back(src: str, dst: str) -> None:
+    """Copy src to dst via a temp file beside dst, then os.replace."""
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), prefix=".undo-", suffix=".tmp")
     os.close(fd)
     try:
@@ -250,6 +304,23 @@ def _copy_over(src: str, dst: str) -> None:
         raise
 
 
+def _undo_meta(j, root: str) -> None:
+    info = json.loads(j["old_json"]) if j["old_json"] else {}
+    for sc in info.get("sidecars", []):
+        if not sc["existed"] and os.path.lexists(_full(root, sc["rel"])):
+            _set_aside(root, j["id"], sc["rel"])
+    bdir = info.get("backup_dir")
+    if not bdir or not os.path.isdir(_full(root, bdir)):
+        return
+    for dp, _, fns in os.walk(_full(root, bdir)):
+        for fn in fns:
+            backup = os.path.join(dp, fn)
+            rel = _rel(_full(root, bdir), backup)
+            if os.path.lexists(_full(root, rel)):
+                _set_aside(root, j["id"], rel)
+            _copy_back(backup, _full(root, rel))
+
+
 def undo_batch(conn, batch_id: int, sources: dict[str, str]) -> int:
     batch = conn.execute("select state from batches where id = ?", (batch_id,)).fetchone()
     if batch is None:
@@ -257,26 +328,20 @@ def undo_batch(conn, batch_id: int, sources: dict[str, str]) -> int:
     if batch["state"] == "final":
         raise ValueError("batch is final (quarantine emptied); undo is unavailable")
     rows = conn.execute(
-        "select * from journal where batch_id = ? and state = 'done' order by seq desc",
-        (batch_id,),
+        "select * from journal where batch_id = ? order by seq desc", (batch_id,)
     ).fetchall()
+    rows = [j for j in rows if j["state"] == "done"
+            or (j["op"] == "meta" and j["state"] in ("failed", "pending"))]
+    for name in {j["source"] for j in rows}:
+        if not _usable(sources.get(name)):
+            raise SourceUnavailable(f"source {name!r} is not mounted and writable")
     undone = 0
     for j in rows:
         root = sources[j["source"]]
-        backup = _full(root, j["src"]) if j["src"] else None
-        if j["op"] == "sidecar":
-            dst = _full(root, j["dst"])
-            if os.path.exists(dst):
-                os.remove(dst)
-            if backup and os.path.exists(backup):
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                shutil.copy2(backup, dst)
-        elif j["op"] == "meta":
-            if backup and os.path.exists(backup):
-                _copy_over(backup, _full(root, j["dst"]))
-        elif j["op"] == "move":
-            if not _undo_move(conn, j, root):
-                continue
+        if j["op"] == "meta":
+            _undo_meta(j, root)
+        elif j["op"] == "move" and not _undo_move(conn, j, root):
+            continue
         conn.execute("update journal set state = 'undone' where id = ?", (j["id"],))
         conn.commit()
         undone += 1
@@ -287,14 +352,16 @@ def undo_batch(conn, batch_id: int, sources: dict[str, str]) -> int:
 
 def _undo_move(conn, j, root: str) -> bool:
     old = json.loads(j["old_json"]) if j["old_json"] else None
-    src_full, dst_full = _full(root, j["src"]), _full(root, j["dst"])
-    if _name_taken(root, j["src"]) or not os.path.exists(dst_full):
+    same_dir = j["src"].rpartition("/")[0] == j["dst"].rpartition("/")[0]
+    ignore = j["dst"].rpartition("/")[2] if same_dir else None
+    if _name_taken(root, j["src"], ignore) or not _exists_exact(root, j["dst"]):
         with conn:
             conn.execute("update journal set state = 'failed' where id = ?", (j["id"],))
             _review(conn, "undo_conflict", old["file_id"] if old else None)
         return False
+    src_full = _full(root, j["src"])
     os.makedirs(os.path.dirname(src_full), exist_ok=True)
-    os.rename(dst_full, src_full)
+    os.rename(_full(root, j["dst"]), src_full)
     if old:
         conn.execute(
             "update files set relpath = ?, size = ?, mtime = ?, sha256 = ?, "
@@ -308,30 +375,38 @@ def _undo_move(conn, j, root: str) -> bool:
 
 
 def recover(conn, sources: dict[str, str]) -> int:
-    """Settle journal rows left `pending` by a crash. Returns rows changed."""
+    """Settle journal rows left `pending` by a crash. Returns rows changed.
+
+    Rows of sources that are not mounted stay pending.
+    """
     fixed = 0
+    usable: dict[str, bool] = {}
     rows = conn.execute("select * from journal where state = 'pending' order by id").fetchall()
     for j in rows:
-        root = sources.get(j["source"])
-        if root is None:
+        name = j["source"]
+        if name not in usable:
+            usable[name] = _usable(sources.get(name))
+        if not usable[name]:
             continue
-        old = json.loads(j["old_json"]) if j["old_json"] else None
-        file_id = old["file_id"] if old else None
+        root = sources[name]
+        info = json.loads(j["old_json"]) if j["old_json"] else None
+        file_id = info["file_id"] if info else None
         is_move = j["op"] == "move"
-        src_exists = is_move and os.path.exists(_full(root, j["src"]))
-        dst_exists = j["dst"] is not None and os.path.exists(_full(root, j["dst"]))
+        src_exists = is_move and _exists_exact(root, j["src"])
+        dst_exists = j["dst"] is not None and _exists_exact(root, j["dst"])
         with conn:
             if is_move and dst_exists and not src_exists:
                 conn.execute("update journal set state = 'done' where id = ?", (j["id"],))
-                if old:
+                if info:
                     quarantined = j["dst"].startswith(_QUARANTINE + "/")
                     _update_file_row(conn, file_id, root, j["dst"],
                                      "quarantined" if quarantined else "organized")
             elif is_move and src_exists:
                 conn.execute("update journal set state = 'failed' where id = ?", (j["id"],))
             else:
+                # lost move, or an interrupted meta write (undo still reverts it)
                 conn.execute("update journal set state = 'failed' where id = ?", (j["id"],))
-                _review(conn, "recover_lost", file_id)
+                _review(conn, "meta_failed" if j["op"] == "meta" else "recover_lost", file_id)
         fixed += 1
     return fixed
 
@@ -339,25 +414,38 @@ def recover(conn, sources: dict[str, str]) -> int:
 # ------------------------------------------------------ empty quarantine
 
 
+def _is_link(path: str) -> bool:
+    isjunction = getattr(os.path, "isjunction", None)
+    return os.path.islink(path) or bool(isjunction and isjunction(path))
+
+
 def empty_quarantine(conn, sources: dict[str, str], source_name: str, confirm: str) -> int:
     """Delete everything under <root>/_quarantine (the only deleting code)."""
     if confirm != "EMPTY":
         raise ValueError('confirmation must be "EMPTY"')
-    qdir = os.path.join(sources[source_name], _QUARANTINE)
-    deleted = 0
-    if os.path.isdir(qdir):
-        for entry in os.listdir(qdir):
-            path = os.path.join(qdir, entry)
-            if os.path.isdir(path) and not os.path.islink(path):
-                deleted += sum(len(files) for _, _, files in os.walk(path))
-                shutil.rmtree(path)
-            else:
-                deleted += 1
-                os.remove(path)
-    with conn:
+    root = sources[source_name]
+    if not _usable(root):
+        raise ValueError(f"source {source_name!r} is not mounted and writable")
+    qdir = os.path.join(root, _QUARANTINE)
+    if _is_link(qdir) or (
+        os.path.exists(qdir)
+        and os.path.realpath(qdir) != os.path.join(os.path.realpath(root), _QUARANTINE)
+    ):
+        raise ValueError("_quarantine is a link or resolves outside the source; refusing")
+    with conn:  # final first: a crash mid-delete must not leave undo available
         conn.execute(
             "update batches set state = 'final' where id in "
             "(select distinct batch_id from journal where source = ?)",
             (source_name,),
         )
+    deleted = 0
+    if os.path.isdir(qdir):
+        for entry in os.listdir(qdir):
+            path = os.path.join(qdir, entry)
+            if os.path.isdir(path) and not _is_link(path):
+                deleted += sum(len(files) for _, _, files in os.walk(path))
+                shutil.rmtree(path)
+            else:
+                deleted += 1
+                os.remove(path)
     return deleted

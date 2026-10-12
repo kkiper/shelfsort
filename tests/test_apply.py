@@ -5,7 +5,7 @@ import os
 import pytest
 
 from shelfsort import apply
-from shelfsort.apply import create_batch, empty_quarantine, recover, run_batch, undo_batch
+from shelfsort.apply import SourceUnavailable, create_batch, empty_quarantine, recover, run_batch, undo_batch
 from shelfsort.models import Kind
 from shelfsort.mounts import SourceStatus
 from shelfsort.plan import PlanInput, build_plan
@@ -246,7 +246,7 @@ def test_best_identity_is_used_and_manual_wins_ties(fixture_source, conn, settin
     conn.commit()
     seen = []
     monkeypatch.setattr(apply, "write_metadata",
-                        lambda root, rel, ident, ext, sc: seen.append((rel, ident.title, ext, sc)) or [])
+                        lambda root, rel, ident, ext, sc, backup_dir=None: seen.append((rel, ident.title, ext, sc)) or [])
     run_batch(conn, bid, fixture_source.sources, settings)
     assert seen == [("Gardening/Plans & Articles/Compost.pdf", "Manual", "pdf", True)]
 
@@ -254,15 +254,15 @@ def test_best_identity_is_used_and_manual_wins_ties(fixture_source, conn, settin
 def test_metadata_undo_restores_bytes_and_removes_sidecar(fixture_source, conn, settings, monkeypatch):
     from shelfsort.writemeta import backup_original
 
-    def fake(root, rel, ident, ext, sidecar_all):
+    def fake(root, rel, ident, ext, sidecar_all, backup_dir):
         full = os.path.join(root, *rel.split("/"))
-        backup_original(root, rel)
+        backup_original(root, rel, backup_dir)
         with open(full, "ab") as f:
             f.write(b"EMBEDDED")
         side_rel = os.path.splitext(rel)[0] + ".opf"
         side = os.path.join(root, *side_rel.split("/"))
         if os.path.exists(side):
-            backup_original(root, side_rel)
+            backup_original(root, side_rel, backup_dir)
         with open(side, "wb") as f:
             f.write(b"<opf/>")
         return [full, side]
@@ -278,7 +278,7 @@ def test_metadata_undo_restores_bytes_and_removes_sidecar(fixture_source, conn, 
     run_batch(conn, bid, fixture_source.sources, settings)
     assert fixture_source.read("Woodworking/Plans & Articles/Shop Stool.pdf") == b"stoolEMBEDDED"
     ops = [r[0] for r in conn.execute("select op from journal order by id")]
-    assert ops.count("meta") == 4 and ops.count("sidecar") == 4
+    assert ops.count("meta") == 4 and "sidecar" not in ops
     row = file_row(conn, "Woodworking/Plans & Articles/Shop Stool.pdf")
     assert row["sha256"] == hashlib.sha256(b"stoolEMBEDDED").hexdigest()
     undo_batch(conn, bid, fixture_source.sources)
@@ -292,3 +292,134 @@ def test_run_batch_rejects_finished_batch(fixture_source, conn, settings):
     run_batch(conn, bid, fixture_source.sources, settings)
     with pytest.raises(ValueError):
         run_batch(conn, bid, fixture_source.sources, settings)
+
+
+def _ident(conn, fid):
+    conn.execute("insert into identities(file_id, method, json, confidence) "
+                 "values (?, 'm', '{}', 0.9)", (fid,))
+    conn.commit()
+
+
+def _fake_writer(raise_after=False):
+    from shelfsort.writemeta import backup_original
+
+    def fake(root, rel, ident, ext, sidecar_all, backup_dir):
+        full = os.path.join(root, *rel.split("/"))
+        backup_original(root, rel, backup_dir)
+        with open(full, "ab") as f:
+            f.write(b"EMBEDDED")
+        if raise_after:
+            raise RuntimeError("crash")
+        return [full]
+
+    return fake
+
+
+def test_stale_backup_never_restored_over_other_file(fixture_source, conn, settings, monkeypatch, batch_with_entry):
+    fixture_source.write("In/a.pdf", b"original A")
+    fixture_source.write("In2/b.pdf", b"original B")
+    b1 = batch_with_entry(fixture_source, "In/a.pdf", target="Out/t.pdf", write_meta=1)
+    b2 = batch_with_entry(fixture_source, "In2/b.pdf", target="Out/t.pdf", write_meta=1)
+    for r in conn.execute("select id from files").fetchall():
+        _ident(conn, r["id"])
+    monkeypatch.setattr(apply, "write_metadata", _fake_writer())
+    run_batch(conn, b1, fixture_source.sources, settings)
+    undo_batch(conn, b1, fixture_source.sources)
+    assert fixture_source.read("In/a.pdf") == b"original A"
+    run_batch(conn, b2, fixture_source.sources, settings)
+    assert fixture_source.read("Out/t.pdf") == b"original BEMBEDDED"
+    undo_batch(conn, b2, fixture_source.sources)
+    assert fixture_source.read("In2/b.pdf") == b"original B"
+    assert fixture_source.read("In/a.pdf") == b"original A"
+
+
+def test_crash_after_pending_meta_row_is_undoable(fixture_source, conn, settings, monkeypatch, batch_with_entry):
+    bid = batch_with_entry(fixture_source, "Gardening/compost.pdf", target="G/c.pdf", write_meta=1)
+    _ident(conn, file_row(conn, "Gardening/compost.pdf")["id"])
+    monkeypatch.setattr(apply, "write_metadata", _fake_writer(raise_after=True))
+    run_batch(conn, bid, fixture_source.sources, settings)
+    assert fixture_source.read("G/c.pdf") == b"compostEMBEDDED"
+    conn.execute("update journal set state='pending' where op='meta'")  # as after a real crash
+    conn.commit()
+    undo_batch(conn, bid, fixture_source.sources)
+    assert fixture_source.read("Gardening/compost.pdf") == b"compost"
+    assert not fixture_source.exists("G/c.pdf")
+
+
+def test_undo_refuses_when_unmounted(fixture_source, conn, settings, monkeypatch):
+    bid = plan_and_batch(conn, fixture_source)
+    run_batch(conn, bid, fixture_source.sources, settings)
+    after = snapshot(fixture_source.root)
+    monkeypatch.setattr(apply, "check_source", lambda root: SourceStatus(False, False, "gone"))
+    with pytest.raises(SourceUnavailable):
+        undo_batch(conn, bid, fixture_source.sources)
+    assert isinstance(SourceUnavailable("x"), ValueError)
+    assert snapshot(fixture_source.root) == after
+    assert count(conn, "select count(*) from journal where state != 'done'") == 0
+    assert count(conn, "select count(*) from batches where state='done'") == 1
+
+
+def test_recover_leaves_unmounted_pending(conn, fixture_source, insert_journal, journal_state, monkeypatch):
+    fixture_source.write("new/a.pdf", b"x")
+    jid = insert_journal(state="pending", src="old/a.pdf", dst="new/a.pdf")
+    monkeypatch.setattr(apply, "check_source", lambda root: SourceStatus(False, False, "gone"))
+    assert recover(conn, fixture_source.sources) == 0
+    assert journal_state(jid) == "pending"
+
+
+def test_undo_case_only_rename(fixture_source, conn, settings, batch_with_entry):
+    bid = batch_with_entry(fixture_source, "Gardening/compost.pdf", target="Gardening/Compost.pdf")
+    run_batch(conn, bid, fixture_source.sources, settings)
+    assert "Compost.pdf" in os.listdir(fixture_source.path("Gardening"))
+    assert undo_batch(conn, bid, fixture_source.sources) == 1
+    assert "compost.pdf" in os.listdir(fixture_source.path("Gardening"))
+    assert count(conn, "select count(*) from journal where state='failed'") == 0
+
+
+def test_recover_case_only_rename_uses_actual_name(conn, fixture_source, insert_journal, journal_state):
+    fixture_source.write("D/Compost.pdf", b"x")  # renamed already; src name differs only by case
+    jid = insert_journal(state="pending", src="D/compost.pdf", dst="D/Compost.pdf")
+    assert recover(conn, fixture_source.sources) == 1
+    assert journal_state(jid) == "done"
+
+
+def test_empty_quarantine_refuses_symlinked_quarantine(conn, fixture_source, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "precious.pdf").write_bytes(b"keep")
+    try:
+        os.symlink(outside, fixture_source.path("_quarantine"), target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted")
+    with pytest.raises(ValueError):
+        empty_quarantine(conn, fixture_source.sources, "remote", "EMPTY")
+    assert (outside / "precious.pdf").read_bytes() == b"keep"
+
+
+def test_undo_sets_aside_user_replaced_file(fixture_source, conn, settings, monkeypatch, batch_with_entry):
+    bid = batch_with_entry(fixture_source, "Gardening/compost.pdf", target="G/c.pdf", write_meta=1)
+    _ident(conn, file_row(conn, "Gardening/compost.pdf")["id"])
+    monkeypatch.setattr(apply, "write_metadata", _fake_writer())
+    run_batch(conn, bid, fixture_source.sources, settings)
+    fixture_source.write("G/c.pdf", b"user edited this")
+    undo_batch(conn, bid, fixture_source.sources)
+    assert fixture_source.read("Gardening/compost.pdf") == b"compost"
+    kept = [os.path.join(dp, fn) for dp, _, fns in os.walk(fixture_source.path("_quarantine/_undone"))
+            for fn in fns]
+    assert [open(k, "rb").read() for k in kept] == [b"user edited this"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows-only")
+def test_empty_quarantine_refuses_junction(conn, fixture_source, tmp_path):
+    import subprocess
+
+    outside = tmp_path / "outside_j"
+    outside.mkdir()
+    (outside / "precious.pdf").write_bytes(b"keep")
+    r = subprocess.run(["cmd", "/c", "mklink", "/J", fixture_source.path("_quarantine"), str(outside)],
+                       capture_output=True)
+    if r.returncode != 0:
+        pytest.skip("junction creation not possible")
+    with pytest.raises(ValueError):
+        empty_quarantine(conn, fixture_source.sources, "remote", "EMPTY")
+    assert (outside / "precious.pdf").read_bytes() == b"keep"

@@ -137,6 +137,7 @@ def batch_with_entry(conn):
         cur = conn.execute(
             "insert into batches(scope, state, created) values ('{}', 'pending', 'now')")
         conn.execute("insert into batch_files values (?, ?)", (cur.lastrowid, fid))
+        conn.execute("update files set status='planned' where id=?", (fid,))
         conn.commit()
         return cur.lastrowid
 

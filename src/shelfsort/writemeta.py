@@ -106,8 +106,10 @@ def ebook_meta_args(path: str, ident: Identity) -> list[str]:
     return args
 
 
-def backup_original(source_root: str, relpath: str) -> str:
-    dest = os.path.join(source_root, "_quarantine", "_originals", relpath)
+def backup_original(
+    source_root: str, relpath: str, backup_dir: str = "_quarantine/_originals"
+) -> str:
+    dest = os.path.join(source_root, *backup_dir.split("/"), *relpath.split("/"))
     if not os.path.exists(dest):
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copy2(os.path.join(source_root, relpath), dest)
@@ -175,22 +177,25 @@ def _cover_jpeg(path: str, ext: str) -> bytes | None:
     return None
 
 
-def _write_sidecar(source_root: str, rel: str, data: bytes) -> str:
+def _write_sidecar(source_root: str, rel: str, data: bytes, backup_dir: str) -> str:
     full = os.path.abspath(os.path.join(source_root, rel))
     if os.path.exists(full):
-        backup_original(source_root, rel)
+        backup_original(source_root, rel, backup_dir)
     with open(full, "wb") as f:
         f.write(data)
     return full
 
 
-def write_metadata(source_root: str, relpath: str, ident: Identity, ext: str, sidecar_all: bool) -> list[str]:
+def write_metadata(
+    source_root: str, relpath: str, ident: Identity, ext: str, sidecar_all: bool,
+    backup_dir: str = "_quarantine/_originals",
+) -> list[str]:
     ext = ext.lower().lstrip(".")
     full = os.path.abspath(os.path.join(source_root, relpath))
     written: list[str] = []
     embeddable = ext in _EMBED_EXTS or ext == "cbz"
     if embeddable:
-        backup_original(source_root, relpath)
+        backup_original(source_root, relpath, backup_dir)
         if ext == "cbz":
             _write_cbz(full, ident)
         else:
@@ -198,8 +203,8 @@ def write_metadata(source_root: str, relpath: str, ident: Identity, ext: str, si
         written.append(full)
     if sidecar_all or not embeddable:
         stem = os.path.splitext(relpath)[0]
-        written.append(_write_sidecar(source_root, stem + ".opf", opf_xml(ident).encode("utf-8")))
+        written.append(_write_sidecar(source_root, stem + ".opf", opf_xml(ident).encode("utf-8"), backup_dir))
         cover = _cover_jpeg(full, ext)
         if cover is not None:
-            written.append(_write_sidecar(source_root, stem + ".cover.jpg", cover))
+            written.append(_write_sidecar(source_root, stem + ".cover.jpg", cover, backup_dir))
     return written
