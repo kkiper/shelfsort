@@ -16,7 +16,8 @@ def test_embedded_discards_junk(monkeypatch):
 @pytest.mark.parametrize(
     "title",
     ["Untitled", "untitled document", "Unknown", "scan0001", "Document", "document12",
-     "Adobe Acrobat", "MICROSOFT WORD - x"],
+     "Adobe Acrobat", "MICROSOFT WORD - x", "Scan 0042", "IMG_1234",
+     "Adobe Acrobat - report.pdf", "untitled document"],
 )
 def test_embedded_junk_titles(monkeypatch, title):
     _patch(monkeypatch, {"title": title, "author(s)": "Bill Hylton"})
@@ -78,3 +79,23 @@ def test_tool_error_returns_none(monkeypatch):
 
     monkeypatch.setattr(embedded, "ebook_meta_read", boom)
     assert embedded.resolve("x.epub", "epub") is None
+
+
+@pytest.mark.parametrize(
+    "title",
+    ["Scanning Electron Microscopy", "Scandinavian Design", "Unknown Pleasures",
+     "Untitled Essays", "Adobe Photoshop CS6 Classroom in a Book"],
+)
+def test_real_titles_not_junk(monkeypatch, title):
+    _patch(monkeypatch, {"title": title})
+    assert embedded.resolve("x.epub", "epub").title == title
+
+
+@pytest.mark.parametrize(
+    "published,expected",
+    [("0101-01-01T00:00:00+00:00", None), ("1449-01-01", None), ("1450-01-01", 1450),
+     ("2999-01-01", None), ("2012-05-01", 2012)],
+)
+def test_year_range(monkeypatch, published, expected):
+    _patch(monkeypatch, {"title": "T", "published": published})
+    assert embedded.resolve("x.epub", "epub").year == expected

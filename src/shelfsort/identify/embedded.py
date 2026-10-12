@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import os
+import datetime
 import re
 
 from shelfsort.identify.isbn import find_isbns
 from shelfsort.models import Identity
 from shelfsort.tools import ToolError, ebook_meta_read
 
-_JUNK_RE = re.compile(r"^(microsoft word - |untitled|unknown|scan|document\d*$|adobe )", re.I)
+_JUNK_PREFIX = "microsoft word - "
+_JUNK_RE = re.compile(
+    r"untitled( document)?\d*|unknown|scan[\s_-]*\d*|document\d*|img[_-]?\d+|adobe (acrobat|pdf)\b.*",
+    re.I,
+)
+_MIN_YEAR = 1450
 _SORT_NAME_RE = re.compile(r"\s*\[[^\]]*\]\s*$")
 _YEAR_RE = re.compile(r"\b(\d{4})\b")
 _ISBN_ID_RE = re.compile(r"isbn:\s*([0-9Xx\- ]+)", re.I)
@@ -28,6 +34,10 @@ def _isbn(raw: str) -> str | None:
     return None
 
 
+def _is_junk(title: str) -> bool:
+    return title.lower().startswith(_JUNK_PREFIX) or bool(_JUNK_RE.fullmatch(title))
+
+
 def resolve(path: str, ext: str) -> Identity | None:
     try:
         meta = ebook_meta_read(path)
@@ -35,13 +45,15 @@ def resolve(path: str, ext: str) -> Identity | None:
         return None
     title = meta.get("title", "").strip()
     stem = os.path.splitext(os.path.basename(path))[0]
-    if not title or _JUNK_RE.match(title) or title.lower() == stem.lower():
+    if not title or _is_junk(title) or title.lower() == stem.lower():
         return None
     authors = _authors(meta.get("author(s)", ""))
     year = None
     m = _YEAR_RE.search(meta.get("published", ""))
     if m:
-        year = int(m.group(1))
+        y = int(m.group(1))
+        if _MIN_YEAR <= y <= datetime.date.today().year + 1:
+            year = y
     return Identity(
         title=title,
         authors=authors,

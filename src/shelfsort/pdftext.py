@@ -41,7 +41,11 @@ def page_text(path: str, pages: Iterable[int]) -> str:
 def render_page_png(path: str, page: int, dpi: int = 200) -> bytes:
     doc = _open(path)
     try:
+        if not 0 <= page < doc.page_count:
+            raise ToolError(f"page {page} out of range for {path}")
         return doc[page].get_pixmap(dpi=dpi).tobytes("png")
+    except ToolError:
+        raise
     except Exception as e:
         raise ToolError(f"cannot render page {page} of {path}: {e}") from e
     finally:
