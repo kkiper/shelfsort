@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>shelfsort</Name>
+  <!-- Replace YOUR_GITHUB_USER with the account you pushed the image to, or use your own local image name. -->
+  <Repository>ghcr.io/YOUR_GITHUB_USER/shelfsort:latest</Repository>
+  <Registry></Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support></Support>
+  <Overview>Organizes an ebook collection (books, magazines, plans and articles): scans sources, identifies files, plans renames and moves, writes metadata, with undo and quarantine. No login: use only on a trusted LAN.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8585]/</WebUI>
+  <Icon></Icon>
+  <ExtraParams></ExtraParams>
+  <DateInstalled></DateInstalled>
+  <Config Name="WebUI Port" Target="8585" Default="8585" Mode="tcp" Description="Port for the web UI." Type="Port" Display="always" Required="true" Mask="false">8585</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/shelfsort" Mode="rw" Description="Database, caches and logs." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/shelfsort</Config>
+  <Config Name="Remote NAS books" Target="/sources/remote" Default="/mnt/remotes/YOUR_NAS_SHARE" Mode="rw" Description="Your NAS share. Mount it first with the Unassigned Devices plugin (Add Remote SMB/NFS Share), then enter the resulting /mnt/remotes/... path here." Type="Path" Display="always" Required="false" Mask="false">/mnt/remotes/YOUR_NAS_SHARE</Config>
+  <Config Name="BookOrbit library" Target="/sources/local" Default="/mnt/user/YOUR_BOOKORBIT_LIBRARY" Mode="rw" Description="The share BookOrbit uses for its library." Type="Path" Display="always" Required="false" Mask="false">/mnt/user/YOUR_BOOKORBIT_LIBRARY</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Informational. The image always runs as 99:100 (nobody:users), Unraid's default." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Informational. The image always runs as 99:100 (nobody:users), Unraid's default." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+</Container>

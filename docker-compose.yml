@@ -1,0 +1,22 @@
+# Local development. Put test books in ./dev/sources/remote and ./dev/sources/local.
+services:
+  app:
+    build: .
+    ports:
+      - "8585:8585"
+    environment:
+      PORT: "8585"
+    volumes:
+      - ./dev/sources/remote:/sources/remote
+      - ./dev/sources/local:/sources/local
+      - ./dev/config:/config
+    user: "99:100"
+
+  # Optional: local Ollama for the AI resolver. Uncomment, then in Settings
+  # enable Ollama with URL http://ollama:11434 and a vision model (default: llava).
+  # ollama:
+  #   image: ollama/ollama
+  #   volumes:
+  #     - ./dev/ollama:/root/.ollama
+  #   ports:
+  #     - "11434:11434"
