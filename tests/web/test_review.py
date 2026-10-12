@@ -54,7 +54,7 @@ def test_group_quarantine_decision_is_replanned(web, variant_group):
 
 def test_single_edit_resolves_and_replans(web, unidentified_item):
     r = web.client.post(f"/review/{unidentified_item.id}/single", follow_redirects=False, data={
-        "magazine": "Wood", "issue_date": "2002-04", "issue_number": "95",
+        "file_id": unidentified_item.file_id, "magazine": "Wood", "issue_date": "2002-04", "issue_number": "95",
         "cover_story": "Router Jigs", "subject": "Woodworking", "kind": "Magazines"})
     assert r.status_code == 303
     tgt = web.one("select target_relpath from plan_entries where file_id=?",
@@ -74,6 +74,7 @@ def test_single_subject_override_changes_target(web):
     item = web.one("select * from review_items where file_id=?", fid)
     assert item["reason"] == "subject"
     web.client.post(f"/review/{item['id']}/single", data={
+        "file_id": fid, "kind": "Magazines",
         "magazine": "Wood", "issue_date": "2002-04", "subject": "Woodworking"})
     tgt = web.one("select target_relpath from plan_entries where file_id=?", fid)[0]
     assert tgt == "Woodworking/Magazines/Wood/Wood - 2002-04.pdf"
@@ -83,7 +84,9 @@ def test_single_subject_override_changes_target(web):
     ("issue_date", "2002-13"), ("issue_date", "April 2002"),
     ("issue_number", "ninety"), ("kind", "Comics")])
 def test_single_bad_input_is_400(web, unidentified_item, field, value):
-    r = web.client.post(f"/review/{unidentified_item.id}/single", data={field: value})
+    data = {"file_id": unidentified_item.file_id, "magazine": "Wood", "kind": "Magazines",
+            "subject": "Woodworking", field: value}
+    r = web.client.post(f"/review/{unidentified_item.id}/single", data=data)
     assert r.status_code == 400
     assert web.one("select resolved from review_items where id=?", unidentified_item.id)[0] == 0
     assert web.one("select count(*) from identities where method='manual'")[0] == 0
@@ -107,6 +110,9 @@ def test_bulk_keep_format(web, two_variant_groups_one_without_epub):
     chair_pdf = web.one("select p.action from plan_entries p join files f on f.id=p.file_id"
                         " where f.relpath='Woodworking/Chair.pdf'")[0]
     assert chair_pdf == "quarantine"
+    epub = web.one("select p.action from plan_entries p join files f on f.id=p.file_id"
+                   " where f.relpath='Woodworking/Chair.epub'")[0]
+    assert epub != "quarantine"
     assert web.one("select count(*) from plan_entries p join files f on f.id=p.file_id"
                    " where f.relpath like 'Woodworking/Chair.epub'")[0] == 1  # kept: moves to Books
 
@@ -200,3 +206,61 @@ def test_replan_honors_manual_identity(web):
     web.replan()
     assert web.one("select target_relpath from plan_entries where file_id=?", fid)[0] == \
         "Woodworking/Books/Bo/Jig Book.pdf"
+
+
+@pytest.mark.parametrize("tab", ["near", "possible", "unidentified"])
+def test_bulk_keep_format_only_on_variant_tab(web, tab):
+    r = web.client.post("/review/bulk", data={"tab": tab, "action": "keep_format", "format": "epub"})
+    assert r.status_code == 400
+
+
+def test_keep_format_button_only_on_variant_tab(web, two_variant_groups_one_without_epub):
+    assert "keep_format" in web.client.get("/review?tab=variant").text
+    assert "keep_format" not in web.client.get("/review?tab=near").text
+
+
+def test_keep_in_one_group_beats_quarantine_in_another(web):
+    a1 = web.add("Woodworking/Chair.pdf", "s1", book())
+    a2 = web.add("Woodworking/Chair2.pdf", "s2", book())
+    web.add("Woodworking/Chair.epub", "s3", book())
+    web.replan()
+    var = web.one("select group_id from review_items where reason='variant'")[0]
+    near = web.one("select group_id from review_items where reason='near'")[0]
+    assert {r[0] for r in web.conn.execute(
+        "select file_id from group_members where group_id=?", (near,))} == {a1, a2}
+    web.conn.execute("update group_members set decision='keep' where group_id=? and file_id=?", (var, a1))
+    web.conn.execute("update group_members set decision='quarantine' where group_id=? and file_id=?", (near, a1))
+    web.conn.execute("update group_members set decision='keep' where group_id=? and file_id=?", (near, a2))
+    web.conn.execute("update review_items set resolved=1 where group_id in (?, ?)", (var, near))
+    web.conn.commit()
+    web.replan()
+    act = web.one("select action, target_relpath from plan_entries where file_id=?", a1)
+    assert act["action"] != "quarantine" and act["target_relpath"].startswith("Woodworking/Books/")
+
+
+def test_single_requires_matching_file_id(web, unidentified_item):
+    data = {"magazine": "Wood", "kind": "Magazines", "subject": "Woodworking"}
+    for extra in ({}, {"file_id": unidentified_item.file_id + 99}):
+        r = web.client.post(f"/review/{unidentified_item.id}/single", data={**data, **extra})
+        assert r.status_code == 400
+    assert web.one("select resolved from review_items where id=?", unidentified_item.id)[0] == 0
+
+
+@pytest.mark.parametrize("drop", ["kind", "magazine"])
+def test_single_requires_kind_and_title_or_magazine(web, unidentified_item, drop):
+    data = {"file_id": unidentified_item.file_id, "magazine": "Wood", "kind": "Magazines",
+            "subject": "Woodworking"}
+    del data[drop]
+    assert web.client.post(f"/review/{unidentified_item.id}/single", data=data).status_code == 400
+    assert web.one("select count(*) from identities where method='manual'")[0] == 0
+    assert web.one("select resolved from review_items where id=?", unidentified_item.id)[0] == 0
+
+
+def test_single_requires_resolvable_subject(web):
+    fid = web.add("misc/x.pdf", "m1", None, pages=100)
+    web.replan()
+    item = web.one("select id from review_items where file_id=?", fid)[0]
+    data = {"file_id": fid, "magazine": "Wood", "kind": "Magazines"}
+    assert web.client.post(f"/review/{item}/single", data=data).status_code == 400
+    assert web.client.post(f"/review/{item}/single",
+                           data={**data, "subject": "Woodworking"}).status_code == 200

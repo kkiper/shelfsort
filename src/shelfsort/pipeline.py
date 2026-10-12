@@ -253,7 +253,9 @@ def _plan_stages(
     quarantined = {r[0] for r in conn.execute(
         "select gm.file_id from group_members gm join review_items ri"
         " on ri.group_id = gm.group_id where ri.resolved = 1"
-        " and gm.decision = 'quarantine'")}
+        " and gm.decision = 'quarantine' and gm.file_id not in"  # keep wins
+        " (select k.file_id from group_members k join review_items kr"
+        " on kr.group_id = k.group_id where kr.resolved = 1 and k.decision = 'keep')")}
     decisions: list[PlanInput] = []
     for it in live:
         r = it.rec

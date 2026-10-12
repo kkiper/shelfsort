@@ -7,7 +7,7 @@
 <form method="post" action="/review/bulk">
 <input type="hidden" name="tab" value="{{ tab }}">
 <button type="submit" name="action" value="accept_suggestions">{% if group_tab %}Keep all in every group{% else %}Accept all suggestions{% endif %}</button>
-{% if group_tab %}
+{% if tab == "variant" %}
  or keep only <input type="text" name="format" value="epub" size="6" aria-label="format">
 <button type="submit" name="action" value="keep_format">Keep this format</button>
 {% endif %}

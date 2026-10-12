@@ -20,7 +20,19 @@
     f.addEventListener("submit", function (e) {
       e.preventDefault();
       fetch(f.action, { method: f.method || "POST", body: new FormData(f) })
-        .finally(function () { location.reload(); });
+        .then(function (r) {
+          if (r.ok) { location.reload(); return; }
+          return r.text().then(function (t) {
+            var box = document.getElementById("ajax-error");
+            if (!box) {
+              box = document.createElement("div");
+              box.id = "ajax-error"; box.className = "error";
+              f.parentNode.insertBefore(box, f);
+            }
+            box.textContent = t.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || ("Request failed: " + r.status);
+          });
+        })
+        .catch(function () { location.reload(); });
     });
   });
 

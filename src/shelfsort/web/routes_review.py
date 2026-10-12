@@ -224,8 +224,8 @@ async def bulk(request: Request):
         return error_page(request, f"unknown tab {tab!r}", 400)
     if action not in ("accept_suggestions", "keep_format"):
         return error_page(request, f"unknown action {action!r}", 400)
-    if action == "keep_format" and (tab not in GROUP_TABS or fmt is None):
-        return error_page(request, "keep_format needs a group tab and a format", 400)
+    if action == "keep_format" and (tab != "variant" or fmt is None):
+        return error_page(request, "keep_format needs the variant tab and a format", 400)
     busy = busy_response(request)
     if busy is not None:
         return busy
@@ -308,15 +308,23 @@ async def decide_single(request: Request, item_id: int):
             return err
         if item["reason"] == "collision":
             return error_page(request, "collisions are accepted, not edited", 400)
+        if _text(form, "file_id") != str(item["file_id"]):
+            return error_page(request, "this item has changed; reload the page", 400)
         kind = _text(form, "kind")
-        if kind is not None and kind not in _KINDS:
+        if kind not in _KINDS:
             return error_page(request, f"kind must be one of {', '.join(_KINDS)}", 400)
         try:
             ident = parse_identity(form)
         except BadRequest as exc:
             return error_page(request, str(exc), 400)
+        if not (ident.title or ident.magazine):
+            return error_page(request, "a title or a magazine is required", 400)
+        subject = _text(form, "subject") or _file_view(
+            conn, load_settings(conn, request), item["file_id"])["subject"]
+        if not subject:
+            return error_page(request, "a subject is required", 400)
         _save_manual(conn, item["file_id"], ident)
-        _resolve(conn, item_id, {"subject": _text(form, "subject"), "kind": kind})
+        _resolve(conn, item_id, {"subject": subject, "kind": kind})
         conn.commit()
         replan(conn, load_settings(conn, request))
         return _back(tab_of(item["reason"]))

@@ -10,6 +10,7 @@
 {% else %}
 <form class="card" method="post" action="/review/{{ card.id }}/single" tabindex="0" data-card>
 <strong>{{ card.reason }} #{{ card.id }}</strong>
+<input type="hidden" name="file_id" value="{{ f.id }}">
 {% if f.cover %}<img src="/files/{{ f.id }}/cover.png" alt="cover" loading="lazy">{% endif %}
 <div>{{ f.source }}: {{ f.relpath }} <small>({{ f.ext }}{% if f.pages %}, {{ f.pages }} pages{% endif %})</small></div>
 <label>Title <input type="text" name="title" value="{{ f.ident.title or '' }}"></label>
@@ -23,7 +24,6 @@
 <label>Cover story <input type="text" name="cover_story" value="{{ f.ident.cover_story or '' }}"></label>
 <label>Subject <input type="text" name="subject" value="{{ f.subject }}"></label>
 <label>Kind <select name="kind">
-<option value="">(automatic)</option>
 {% for k in card.kinds %}<option value="{{ k }}"{% if k == f.kind %} selected{% endif %}>{{ k }}</option>{% endfor %}
 </select></label>
 <button type="submit">Save</button>
