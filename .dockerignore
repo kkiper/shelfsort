@@ -2,9 +2,9 @@
 .venv
 .superpowers
 .pytest_cache
-__pycache__
-*.pyc
-*.egg-info
+**/__pycache__
+**/*.pyc
+**/*.egg-info
 build
 dev
 docs

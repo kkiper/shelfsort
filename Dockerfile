@@ -7,6 +7,8 @@ ENV PYTHONUNBUFFERED=1 \
     SHELFSORT_DB=/config/shelfsort.db \
     SHELFSORT_SOURCES_ROOT=/sources \
     HOME=/config \
+    USER=shelfsort \
+    LOGNAME=shelfsort \
     QT_QPA_PLATFORM=offscreen \
     PATH=/opt/calibre:$PATH
 
@@ -15,11 +17,29 @@ RUN apt-get update \
         ca-certificates wget \
         tesseract-ocr tesseract-ocr-eng xz-utils \
         libgl1 libegl1 libopengl0 libxcb-cursor0 libfontconfig1 \
+        libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libglib2.0-0 libnss3 \
+        libxcomposite1 libxdamage1 libxrandr2 libgbm1 libasound2 libxtst6 \
+        libxkbfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Calibre via the official installer (provides ebook-meta, fetch-ebook-metadata).
-RUN wget -nv -O- https://download.calibre-ebook.com/linux-installer.sh \
-    | sh /dev/stdin install_dir=/opt isolated=y
+# Optional: --build-arg CALIBRE_VERSION=x.y.z to pin a version.
+ARG CALIBRE_VERSION=
+RUN wget -nv -O /tmp/calibre-install.sh https://download.calibre-ebook.com/linux-installer.sh \
+    && sh /tmp/calibre-install.sh install_dir=/opt isolated=y ${CALIBRE_VERSION:+version=$CALIBRE_VERSION} \
+    && rm /tmp/calibre-install.sh \
+    && ebook-meta --version && fetch-ebook-metadata --version
+
+# Fail the build if Calibre's bundled Qt lacks a system library.
+RUN if [ -f /opt/calibre/lib/libQt6Gui.so.6 ]; then \
+        if ldd /opt/calibre/lib/libQt6Gui.so.6 | grep "not found"; then \
+            echo "missing libraries for Calibre Qt6" >&2; exit 1; \
+        fi; \
+    else echo "WARNING: /opt/calibre/lib/libQt6Gui.so.6 not found; skipping ldd check" >&2; fi
+
+# Passwd entry for uid 99 (nobody:users) so tools that look up the user work.
+RUN getent passwd 99 >/dev/null \
+    || useradd -u 99 -g 100 -d /config -M -s /usr/sbin/nologin shelfsort
 
 WORKDIR /app
 COPY pyproject.toml ./

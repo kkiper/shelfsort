@@ -76,12 +76,17 @@ Run these where Docker exists (Docker was not available when this was written, s
 this has been run yet):
 
 ```
+mkdir -p dev/sources/remote dev/sources/local dev/config
+sudo chown -R 99:100 dev      # the container runs as 99:100 and writes to these mounts
 docker compose build
 docker compose run --rm app pytest -m tools -v    # ebook-meta, tesseract, real OCR
-mkdir -p dev/sources/remote dev/sources/local dev/config
 docker compose up -d
 curl -s localhost:8585/ | grep -q shelfsort && echo OK
 ```
+
+On Unraid the appdata and share permissions for nobody:users are normally already right,
+so the chown is only needed for the local dev folders. To pin Calibre, build with
+`--build-arg CALIBRE_VERSION=x.y.z` (default: latest).
 
 Then run a scan from the UI against `dev/sources` and confirm the dashboard counts.
 
