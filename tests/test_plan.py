@@ -106,13 +106,18 @@ def test_rolls_back_on_error(conn, add_file, tmp_source):
 
 def test_already_at_suffixed_name_is_in_place(conn, add_file, tmp_source):
     d = "Woodworking/Plans & Articles"
-    tmp_source.write(f"{d}/Foo.pdf")
+    tmp_source.write(f"{d}/Foo.pdf")  # held by a file that is not moving
     tmp_source.write(f"{d}/Foo (2).pdf")
     f = add_file("remote", f"{d}/Foo (2).pdf")
-    entries = build_plan(conn, [pi(f, "Foo", relpath=f"{d}/Foo (2).pdf")], tmp_source.sources)
-    assert entries == []
-    assert conn.execute("select count(*) from plan_entries").fetchone()[0] == 0
-    assert conn.execute("select count(*) from review_items").fetchone()[0] == 0
+    g = add_file("remote", "Woodworking/Foo.pdf")
+    entries = build_plan(conn, [
+        pi(f, "x", relpath=f"{d}/Foo (2).pdf", ident=Identity(title="Foo")),
+        pi(g, "Foo"),
+    ], tmp_source.sources)
+    # f is already at its suffixed name: no entry, but its slot stays taken.
+    assert [(e.file_id, e.target_relpath) for e in entries] == [(g, f"{d}/Foo (3).pdf")]
+    rows = conn.execute("select file_id from review_items where reason='collision'").fetchall()
+    assert [r[0] for r in rows] == [g]
 
 
 def test_unknown_source_raises(conn, add_file, tmp_source):
