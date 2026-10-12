@@ -165,8 +165,8 @@ def test_normalize_and_key():
 
 ```python
 def test_find_isbns_variants():
-    text = "ISBN 978-1-4629-2322-6 ... also ISBN-10: 1462923224 and junk 1234567890"
-    assert find_isbns(text) == ["9781462923226"]
+    text = "ISBN 978-1-4629-2322-9 ... also ISBN-10: 1462923224 and junk 1234567890"
+    assert find_isbns(text) == ["9781462923229"]
 
 def test_valid_isbn():
     assert valid_isbn("1462923224") and not valid_isbn("1462923225")
@@ -316,9 +316,9 @@ def test_embedded_discards_junk(monkeypatch):
 
 def test_embedded_maps_fields(monkeypatch):
     monkeypatch.setattr(embedded, "ebook_meta_read", lambda p: {
-        "title": "Router Table", "author(s)": "Bill Hylton", "identifiers": "isbn:9781462923226"})
+        "title": "Router Table", "author(s)": "Bill Hylton", "identifiers": "isbn:9781462923229"})
     i = embedded.resolve("x.epub", "epub")
-    assert (i.title, i.authors, i.isbn, i.confidence) == ("Router Table", ["Bill Hylton"], "9781462923226", 0.85)
+    assert (i.title, i.authors, i.isbn, i.confidence) == ("Router Table", ["Bill Hylton"], "9781462923229", 0.85)
 
 @pytest.mark.tools
 def test_pdftext_on_generated_pdf(tmp_path):  # build a 3-page PDF with PyMuPDF, read text back
@@ -355,14 +355,14 @@ OPF = """<package xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http:
 def test_lookup_parses_and_caches(conn, monkeypatch):
     calls = []
     monkeypatch.setattr(isbn, "run_tool", lambda a, timeout: calls.append(a) or OPF)
-    i = lookup_isbn(conn, "9781462923226"); lookup_isbn(conn, "9781462923226")
+    i = lookup_isbn(conn, "9781462923229"); lookup_isbn(conn, "9781462923229")
     assert (i.title, i.authors, i.year, i.confidence) == ("A Beginner's Guide to House Plants", ["Ryusuke Sakaino"], 2022, 0.95)
     assert len(calls) == 1
 
 def test_lookup_timeout_raises_retry_and_not_cached(conn, monkeypatch):
     def boom(a, timeout): raise ToolTimeout("t")
     monkeypatch.setattr(isbn, "run_tool", boom)
-    with pytest.raises(LookupRetry): lookup_isbn(conn, "9781462923226")
+    with pytest.raises(LookupRetry): lookup_isbn(conn, "9781462923229")
     assert conn.execute("select count(*) from lookup_cache").fetchone()[0] == 0
 ```
 
@@ -490,7 +490,7 @@ def test_subject_vague_uses_keywords(settings):
     assert classify_subject("misc/x.pdf", None, "x.pdf", settings) is None
 
 def test_kind_rules(settings):
-    assert classify_kind(Identity(isbn="9781462923226"), "pdf", 300, settings) == Kind.BOOK
+    assert classify_kind(Identity(isbn="9781462923229"), "pdf", 300, settings) == Kind.BOOK
     assert classify_kind(Identity(magazine="Wood"), "pdf", 90, settings) == Kind.MAGAZINE
     assert classify_kind(None, "pdf", 12, settings) == Kind.PLAN
     assert classify_kind(None, "jpg", None, settings) == Kind.PLAN
