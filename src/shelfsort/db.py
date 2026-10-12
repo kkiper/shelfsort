@@ -61,7 +61,14 @@ create table if not exists journal (
     op text not null,
     src text,
     dst text,
-    state text not null
+    state text not null,
+    source text,
+    old_json text  -- move rows: JSON {file_id, relpath, size, mtime, sha256} of the files row before the move
+);
+create table if not exists batch_files (
+    batch_id integer not null references batches(id),
+    file_id integer not null references files(id),
+    primary key (batch_id, file_id)
 );
 create table if not exists lookup_cache (
     key text primary key,
