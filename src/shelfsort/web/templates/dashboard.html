@@ -21,6 +21,7 @@
 
 <h2>Last scan</h2>
 {% if summary %}
+{% for w in summary.warnings or [] %}<div class="warn">{{ w }}</div>{% endfor %}
 {% for title, counts in [("Status", summary.status_counts), ("Kind", summary.kind_counts),
                          ("Subject", summary.subject_counts), ("Review reasons", summary.review_reasons)] %}
 <p><strong>{{ title }}:</strong>

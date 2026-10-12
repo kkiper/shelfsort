@@ -19,6 +19,7 @@ from shelfsort.dedupe import find_exact_duplicates
 from shelfsort.groups import GroupInput, build_groups
 from shelfsort.identify import identify_file
 from shelfsort.models import FileRecord, FileStatus, Identity, Kind
+from shelfsort.mounts import check_source
 from shelfsort.plan import PlanInput, clean_filename_title, build_plan
 from shelfsort.scan import scan_sources
 from shelfsort.settings import Settings
@@ -32,7 +33,8 @@ _SKIP = (
     FileStatus.QUARANTINED.value,
     FileStatus.MISSING.value,
 )
-_IDENTIFY = (FileStatus.NEW.value, FileStatus.RETRY.value, FileStatus.REVIEW.value)
+_IDENTIFY = (FileStatus.NEW.value, FileStatus.RETRY.value, FileStatus.REVIEW.value,
+             FileStatus.UNREADABLE.value)  # unreadable files are retried every scan
 _FILE_REASONS = ("unreadable", "magazine", "unidentified", "subject", "kind")
 
 
@@ -42,6 +44,7 @@ class PipelineSummary:
     subject_counts: dict[str, int] = field(default_factory=dict)
     kind_counts: dict[str, int] = field(default_factory=dict)
     review_reasons: dict[str, int] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -117,6 +120,18 @@ def _load(
 def run_scan_pipeline(
     conn: sqlite3.Connection, s: Settings, progress: Progress
 ) -> PipelineSummary:
+    # --- sources: an unmounted or read-only source is skipped entirely (its
+    # rows are left untouched, never marked missing)
+    warnings: list[str] = []
+    usable: dict[str, str] = {}
+    for name, root in s.sources.items():
+        st = check_source(root)
+        if st.mounted and st.writable:
+            usable[name] = root
+        else:
+            warnings.append(f"Source {name} skipped: {st.detail}")
+    s = Settings(**{**vars(s), "sources": usable})
+
     # --- scan
     scan_sources(conn, s.sources, lambda n: progress("scan", n, 0))
 
@@ -127,12 +142,14 @@ def run_scan_pipeline(
 
     # --- page counts
     pdfs = [it for it in live if it.rec.ext == "pdf" and it.rec.pages is None]
+    failed: set[int] = set()  # unreadable in this run: not worth identifying now
     for i, it in enumerate(pdfs, 1):
         try:
             it.rec.pages = pdftext.page_count(_abspath(s, it.rec))
             conn.execute("update files set pages = ? where id = ?",
                          (it.rec.pages, it.rec.id))
         except (ToolError, OSError):
+            failed.add(it.rec.id)
             it.rec.status = FileStatus.UNREADABLE
             _set_status(conn, it.rec.id, FileStatus.UNREADABLE)
         progress("pages", i, len(pdfs))
@@ -142,14 +159,17 @@ def run_scan_pipeline(
     manual = {r[0] for r in conn.execute(
         "select file_id from identities where method = 'manual'")}
     todo = [it for it in live
-            if it.rec.status.value in _IDENTIFY and it.rec.id not in manual]
+            if it.rec.status.value in _IDENTIFY and it.rec.id not in manual
+            and it.rec.id not in failed]
     for i, it in enumerate(todo, 1):
         res = identify_file(conn, it.rec, _abspath(s, it.rec), s)
         it.rec.status = res.status
         _set_status(conn, it.rec.id, res.status)
         progress("identify", i, len(todo))
     conn.commit()
-    return _plan_stages(conn, s, live, dup_rows, progress)
+    summary = _plan_stages(conn, s, live, dup_rows, progress)
+    summary.warnings = warnings
+    return summary
 
 
 def replan(
@@ -190,11 +210,20 @@ def _plan_stages(
     resolved_ids = {r[0] for r in conn.execute(
         "select file_id from review_items where resolved = 1 and file_id is not null"
         f" and reason in ({marks})", _FILE_REASONS)}
-    conn.execute(
-        f"delete from review_items where resolved = 0 and reason in ({marks})",
-        _FILE_REASONS)
+    src_marks = ",".join("?" * len(s.sources))
+    conn.execute(  # only items of the sources being planned now
+        f"delete from review_items where resolved = 0 and reason in ({marks})"
+        f" and file_id in (select id from files where source in ({src_marks}))",
+        (*_FILE_REASONS, *s.sources))
+    manual = {r[0] for r in conn.execute(
+        "select file_id from identities where method = 'manual'")}
     for i, it in enumerate(live, 1):
         rec = it.rec
+        if rec.id in resolved_ids and rec.id in manual and rec.status in (
+                FileStatus.UNREADABLE, FileStatus.REVIEW):
+            # The user identified it by hand: plan it with their overrides.
+            rec.status = FileStatus.IDENTIFIED
+            _set_status(conn, rec.id, rec.status)
         if rec.status is not FileStatus.UNREADABLE:
             it.ident = best_identity(conn, rec.id)
             it.subject = classify_subject(rec.relpath, it.ident, it.filename, s)
