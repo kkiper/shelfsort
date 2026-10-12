@@ -64,13 +64,13 @@ def test_changed_file_rehashed_and_status_reset(src, conn):
     f.write_bytes(b"x")
     scan_sources(conn, {"r": str(src)})
     old = rows_by_path(conn)["a.pdf"]["sha256"]
-    conn.execute("update files set status='identified'")
+    conn.execute("update files set status='identified', pages=7")
     conn.commit()
     f.write_bytes(b"changed!")
     r = scan_sources(conn, {"r": str(src)})
     row = rows_by_path(conn)["a.pdf"]
     assert r.updated == 1 and row["sha256"] != old and row["size"] == 8
-    assert row["status"] == "new"
+    assert row["status"] == "new" and row["pages"] is None
 
 
 def test_mtime_change_alone_triggers_update(src, conn):
@@ -130,3 +130,20 @@ def test_sha256_file_chunks(tmp_path):
     data = os.urandom(2 * 1024 * 1024 + 5)
     p.write_bytes(data)
     assert scan.sha256_file(str(p)) == hashlib.sha256(data).hexdigest()
+
+
+def test_hash_oserror_skips_file_and_commits_rest(src, conn, monkeypatch):
+    (src / "bad.pdf").write_bytes(b"b")
+    (src / "good.pdf").write_bytes(b"g")
+    real = scan.sha256_file
+
+    def flaky(path):
+        if path.endswith("bad.pdf"):
+            raise PermissionError("locked")
+        return real(path)
+
+    monkeypatch.setattr(scan, "sha256_file", flaky)
+    r = scan_sources(conn, {"r": str(src)})
+    assert r.added == 1
+    conn.rollback()  # anything uncommitted would vanish
+    assert set(rows_by_path(conn)) == {"good.pdf"}

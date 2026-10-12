@@ -62,24 +62,33 @@ def scan_sources(
                 st = os.stat(full)
             except OSError:
                 continue  # vanished or unreadable; treated as not seen
-            seen.add(rel)
-            seen_count += 1
             ext = os.path.splitext(rel)[1].lower().lstrip(".")
             handled = ext in HANDLED_EXTS
             row = existing.get(rel)
+            unchanged_file = (
+                row is not None
+                and row["size"] == st.st_size
+                and row["mtime"] == st.st_mtime
+            )
+            digest = None
+            if handled and not unchanged_file:
+                try:
+                    digest = sha256_file(full)
+                except OSError:
+                    continue  # vanished, locked or denied; treated as not seen
+            seen.add(rel)
+            seen_count += 1
             if row is None:
                 conn.execute(
                     "insert into files (source, relpath, size, mtime, sha256, ext, status)"
                     " values (?, ?, ?, ?, ?, ?, ?)",
                     (
-                        source, rel, st.st_size, st.st_mtime,
-                        sha256_file(full) if handled else None,
-                        ext,
+                        source, rel, st.st_size, st.st_mtime, digest, ext,
                         (FileStatus.NEW if handled else FileStatus.IGNORED).value,
                     ),
                 )
                 added += 1
-            elif row["size"] == st.st_size and row["mtime"] == st.st_mtime:
+            elif unchanged_file:
                 unchanged += 1
             else:
                 status = (
@@ -87,13 +96,9 @@ def scan_sources(
                     else FileStatus.NEW
                 ).value
                 conn.execute(
-                    "update files set size = ?, mtime = ?, sha256 = ?, ext = ?, status = ?"
-                    " where id = ?",
-                    (
-                        st.st_size, st.st_mtime,
-                        sha256_file(full) if handled else None,
-                        ext, status, row["id"],
-                    ),
+                    "update files set size = ?, mtime = ?, sha256 = ?, ext = ?,"
+                    " pages = null, status = ? where id = ?",
+                    (st.st_size, st.st_mtime, digest, ext, status, row["id"]),
                 )
                 updated += 1
             if progress:
