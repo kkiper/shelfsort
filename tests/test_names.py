@@ -47,3 +47,20 @@ def test_matching_key_book_with_author_and_missing_parts():
     assert matching_key(i) == "book|great book|jose alvarez"
     assert matching_key(Identity()) is None
     assert matching_key(Identity(magazine="Wood")) is None
+
+
+def test_normalize_leaves_kana_and_hangul_unchanged():
+    assert normalize_title("が") == "が"
+    assert normalize_title("한글") == "한글"
+    assert normalize_title("Ａｂ") == "ab"
+
+
+def test_matching_key_none_when_normalized_empty():
+    assert matching_key(Identity(title="The")) is None
+    assert matching_key(Identity(title="!!!")) is None
+    assert matching_key(Identity(magazine="The", issue_date="2002-04")) is None
+
+
+def test_sanitize_strips_path_separators():
+    assert sanitize_component("AC/DC") == "ACDC"
+    assert sanitize_component("a\\b") == "ab"
