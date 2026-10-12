@@ -25,3 +25,20 @@ def test_uvicorn_import_string_resolves_lazy_app(tmp_path, monkeypatch):
     monkeypatch.setenv("SHELFSORT_SOURCES_ROOT", str(tmp_path))
     monkeypatch.setattr(app_mod, "_app", None)
     assert import_from_string("shelfsort.web.app:app").title == "shelfsort"
+
+
+ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]
+
+
+def test_docker_healthcheck_uses_healthz():
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    health = text[text.index("HEALTHCHECK"):text.index("CMD [\"sh\"")]
+    assert "/healthz" in health
+
+
+def test_unraid_remote_share_uses_slave_propagation():
+    import xml.etree.ElementTree as ET
+
+    tree = ET.parse(ROOT / "unraid" / "shelfsort.xml")
+    remote = [c for c in tree.iter("Config") if c.get("Target") == "/sources/remote"]
+    assert [c.get("Mode") for c in remote] == ["rw,slave"]

@@ -154,3 +154,19 @@ def test_real_ebook_meta_on_pdf(tmp_path):
     ident = Identity(magazine="Wood", issue_date="2002-04", issue_number=95)
     write_metadata(str(tmp_path), "m.pdf", ident, "pdf", sidecar_all=False)
     assert "Wood - April 2002" in run_tool(["ebook-meta", str(tmp_path / "m.pdf")])
+
+
+def test_backup_is_fsynced_before_rename(tmp_path, monkeypatch):
+    import os
+
+    from shelfsort.writemeta import backup_original
+
+    (tmp_path / "a.pdf").write_bytes(b"original")
+    events = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(os, "fsync", lambda fd: (events.append("fsync"), real_fsync(fd))[1])
+    monkeypatch.setattr(os, "replace",
+                        lambda a, b: (events.append("replace"), real_replace(a, b))[1])
+    dest = backup_original(str(tmp_path), "a.pdf", "_quarantine/_originals/b1/j1")
+    assert open(dest, "rb").read() == b"original"
+    assert events[:2] == ["fsync", "replace"]

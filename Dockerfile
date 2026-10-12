@@ -58,6 +58,6 @@ VOLUME /config
 EXPOSE 8585
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD ["python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/' % os.environ.get('PORT','8585'), timeout=4)"]
+    CMD ["python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT','8585'), timeout=4)"]
 
 CMD ["sh", "-c", "exec uvicorn shelfsort.web.app:app --host 0.0.0.0 --port ${PORT:-8585}"]

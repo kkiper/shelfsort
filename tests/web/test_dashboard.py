@@ -168,3 +168,30 @@ def test_same_origin_post_passes(client, headers):
 
 def test_cross_site_get_is_not_blocked(client):
     assert client.get("/settings", headers={"Origin": "http://evil.example"}).status_code == 200
+
+
+def test_healthz_is_ok_without_source_or_ollama_checks(client, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("healthz must not check sources or ollama")
+
+    monkeypatch.setattr("shelfsort.web.routes_dashboard.check_source", boom)
+    monkeypatch.setattr("shelfsort.web.routes_dashboard.httpx.get", boom)
+    r = client.get("/healthz")
+    assert r.status_code == 200 and r.text == "ok"
+
+
+def test_worker_logs_job_exceptions(tmp_path, caplog):
+    import logging
+
+    from shelfsort.jobs import Worker
+
+    def job(conn, progress):
+        raise RuntimeError("kaput")
+
+    w = Worker(str(tmp_path / "j.db"))
+    with caplog.at_level(logging.ERROR, logger="shelfsort.jobs"):
+        w.start("scan", job)
+        w.join(10)
+    assert w.status().error == "kaput"
+    [rec] = [r for r in caplog.records if r.name == "shelfsort.jobs"]
+    assert rec.exc_info is not None and "scan" in rec.getMessage()

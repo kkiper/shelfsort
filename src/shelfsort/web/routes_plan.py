@@ -14,6 +14,8 @@ router = APIRouter()
 
 PAGE_SIZE = 200
 _SCOPE_KEYS = ("source", "subject", "kind")
+# Only entries of files still waiting to be applied (not held for review etc.).
+_PLANNED = "from plan_entries p join files f on f.id = p.file_id where f.status = 'planned'"
 
 
 def _scope(data) -> dict[str, str]:
@@ -24,7 +26,8 @@ def _scope(data) -> dict[str, str]:
 def plan(request: Request, source: str = "", subject: str = "", kind: str = "", page: int = 1):
     page = max(page, 1)
     scope = _scope({"source": source, "subject": subject, "kind": kind})
-    where = " and ".join(f"{'f.' if k == 'source' else 'p.'}{k} = ?" for k in scope) or "1"
+    where = " and ".join(["f.status = 'planned'"] + [
+        f"{'f.' if k == 'source' else 'p.'}{k} = ?" for k in scope])
     conn = db.connect(request.app.state.db_path)
     try:
         total = conn.execute(
@@ -37,12 +40,11 @@ def plan(request: Request, source: str = "", subject: str = "", kind: str = "", 
             [*scope.values(), PAGE_SIZE, (page - 1) * PAGE_SIZE]).fetchall()
         facets = {
             "sources": [r[0] for r in conn.execute(
-                "select distinct f.source from plan_entries p join files f on f.id = p.file_id"
-                " order by 1")],
+                f"select distinct f.source {_PLANNED} order by 1")],
             "subjects": [r[0] for r in conn.execute(
-                "select distinct subject from plan_entries where subject is not null order by 1")],
+                f"select distinct p.subject {_PLANNED} and p.subject is not null order by 1")],
             "kinds": [r[0] for r in conn.execute(
-                "select distinct kind from plan_entries where kind is not null order by 1")],
+                f"select distinct p.kind {_PLANNED} and p.kind is not null order by 1")],
         }
     finally:
         conn.close()

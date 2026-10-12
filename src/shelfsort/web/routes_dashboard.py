@@ -7,7 +7,7 @@ from dataclasses import asdict
 
 import httpx
 from fastapi import APIRouter, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from shelfsort import db
 from shelfsort import settings as settings_mod
@@ -29,6 +29,12 @@ def _ollama_reachable(s) -> bool:
     except Exception:  # bad URL, refused, timeout, non-2xx...: never a 500
         return False
     return True
+
+
+@router.get("/healthz", response_class=PlainTextResponse)
+def healthz():
+    """Liveness only: no source mounts, no Ollama (those can hang or be slow)."""
+    return "ok"
 
 
 @router.get("/", response_class=HTMLResponse)

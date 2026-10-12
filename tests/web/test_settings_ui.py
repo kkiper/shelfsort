@@ -78,3 +78,9 @@ def test_ollama_enabled_needs_url(client):
     r = client.post("/settings", data={"ollama_enabled": "on", "ollama_url": ""})
     assert r.status_code == 400
     assert client.post("/settings", data={"ollama_url": "https://o.lan:11434"}).status_code == 200
+
+
+def test_preferred_source_setting(client):
+    assert client.post("/settings", data={"preferred_source": "nas"}).status_code == 200
+    assert _saved(client).preferred_source == "nas"
+    assert 'name="preferred_source"' in client.get("/settings").text

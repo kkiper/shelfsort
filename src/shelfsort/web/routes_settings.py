@@ -76,6 +76,8 @@ def parse_form(form, current: Settings) -> Settings:
             for subject, kws in _pairs(form["keyword_rules"], "keyword_rules")}
     if "sources" in form:
         s.sources = dict(_pairs(form["sources"], "sources"))
+    if "preferred_source" in form:
+        s.preferred_source = (form["preferred_source"] or "").strip() or current.preferred_source
     s.confidence = _number(form, "confidence", s.confidence, float, 0.0, 1.0)
     s.plan_page_limit = _number(form, "plan_page_limit", s.plan_page_limit, int, 1, 100000)
     s.fuzzy_threshold = _number(form, "fuzzy_threshold", s.fuzzy_threshold, int, 0, 100)
@@ -93,6 +95,7 @@ def _view(s: Settings) -> dict:
         "subject_map": "\n".join(f"{k} = {v}" for k, v in s.subject_map.items()),
         "keyword_rules": "\n".join(f"{k} = {', '.join(v)}" for k, v in s.keyword_rules.items()),
         "sources": "\n".join(f"{k} = {v}" for k, v in s.sources.items()),
+        "preferred_source": s.preferred_source,
         "confidence": s.confidence, "plan_page_limit": s.plan_page_limit,
         "fuzzy_threshold": s.fuzzy_threshold, "sidecar_all": s.sidecar_all,
         "ollama_enabled": s.ollama_enabled, "ollama_url": s.ollama_url,

@@ -117,12 +117,29 @@ def backup_original(
         os.close(fd)
         try:
             shutil.copy2(os.path.join(source_root, relpath), tmp)
+            with open(tmp, "r+b") as f:  # on disk before it becomes the backup
+                os.fsync(f.fileno())
             os.replace(tmp, dest)
         except BaseException:
             if os.path.exists(tmp):
                 os.remove(tmp)
             raise
+        _fsync_dir(os.path.dirname(dest))
     return dest
+
+
+def _fsync_dir(path: str) -> None:
+    """Best effort: persist the rename itself (POSIX only)."""
+    if os.name != "posix":
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
 
 
 def _comicinfo_xml(ident: Identity) -> str:

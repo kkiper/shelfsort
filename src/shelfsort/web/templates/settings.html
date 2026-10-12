@@ -5,6 +5,8 @@
 <form method="post" action="/settings">
 <label for="sources">Sources (name = /path, one per line; blank = auto-discover)</label>
 <textarea id="sources" name="sources" rows="3">{{ v.sources }}</textarea>
+<label for="preferred_source">Preferred source (its copy of an exact duplicate is kept)</label>
+<input type="text" id="preferred_source" name="preferred_source" value="{{ v.preferred_source }}">
 <label for="magazines">Magazines (one per line)</label>
 <textarea id="magazines" name="magazines" rows="5">{{ v.magazines }}</textarea>
 <label for="vague_folders">Vague folders (one per line)</label>

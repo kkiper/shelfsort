@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from typing import Any
 from shelfsort import db
 
 ProgressFn = Callable[[str, int, int], None]
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -63,6 +65,7 @@ class Worker:
             finally:
                 conn.close()
         except BaseException as exc:  # a job must never take the server down
+            log.exception("job %r failed", self._status.name)
             error = str(exc) or type(exc).__name__
         with self._lock:
             self._status.error = error

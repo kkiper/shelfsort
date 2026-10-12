@@ -202,3 +202,12 @@ def test_empty_quarantine_blocked_by_unresolved_apply_problems(web):
         "source": "remote", "confirm": "EMPTY", "reviewed_problems": "on"})
     assert r.status_code == 200
     assert not (web.src.root / "_quarantine" / "_originals").exists()
+
+
+def test_plan_lists_only_planned_files(web):
+    add_plan(web, "Woodworking/a.pdf", "Woodworking/Books/Ann/A.pdf")
+    held = add_plan(web, "Woodworking/b.pdf", "Woodworking/Books/Ann/B.pdf")
+    web.conn.execute("update files set status='review' where id=?", (held,))
+    web.conn.commit()
+    html = web.client.get("/plan").text
+    assert "Woodworking/Books/Ann/A.pdf" in html and "Woodworking/Books/Ann/B.pdf" not in html
