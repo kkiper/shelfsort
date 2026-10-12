@@ -30,6 +30,23 @@ TABS: dict[str, tuple[str, ...]] = {
     "magazine": ("magazine",),
     "subject": ("subject", "kind"),
     "collision": ("collision",),
+    "problems": ("meta_failed", "move_failed", "source_changed", "undo_conflict",
+                 "backup_corrupt", "recover_lost", "keeper_missing"),
+}
+PROBLEM_REASONS = frozenset(TABS["problems"])
+PROBLEM_TEXT = {
+    "meta_failed": "Writing metadata failed. The file was moved; its original is kept in"
+                   " _quarantine/_originals until quarantine is emptied.",
+    "move_failed": "Moving the file failed; it was left where it was.",
+    "source_changed": "The file changed (or vanished) after it was planned; it was not touched.",
+    "undo_conflict": "Undo could not move the file back because its old place is taken"
+                     " or it is no longer where it was moved to. Clear the conflict, then"
+                     " press Undo again in History.",
+    "backup_corrupt": "Undo found a metadata backup that does not match its checksum and"
+                      " left the file as it is.",
+    "recover_lost": "After a crash, neither the old nor the new path of a move exists.",
+    "keeper_missing": "This exact duplicate was not quarantined because the copy that was"
+                      " to be kept is missing or changed.",
 }
 GROUP_TABS = ("variant", "near", "possible")
 _GROUP_REASONS = frozenset(GROUP_TABS)
@@ -44,7 +61,8 @@ class BadRequest(ValueError):
 
 
 def tab_of(reason: str) -> str:
-    return next(t for t, rs in TABS.items() if reason in rs)
+    """Tab for a review reason; unknown reasons land in "problems" (never raises)."""
+    return next((t for t, rs in TABS.items() if reason in rs), "problems")
 
 
 def error_page(request: Request, message: str, status: int) -> Response:
@@ -96,7 +114,10 @@ def _card(conn: sqlite3.Connection, s: Settings, item: sqlite3.Row) -> dict:
         card["members"] = [
             {**_file_view(conn, s, m["file_id"]), "decision": m["decision"]} for m in members]
     else:
-        card["file"] = _file_view(conn, s, item["file_id"])
+        card["file"] = (_file_view(conn, s, item["file_id"])
+                        if item["file_id"] is not None else None)
+    if card["tab"] == "problems":
+        card["message"] = PROBLEM_TEXT.get(item["reason"], item["reason"])
     return card
 
 
@@ -196,7 +217,8 @@ def card(request: Request, item_id: int):
         c = _card(conn, load_settings(conn, request), item)
     finally:
         conn.close()
-    name = "review_group.html" if "members" in c else "review_single.html"
+    name = ("review_group.html" if "members" in c
+            else "review_problem.html" if c["tab"] == "problems" else "review_single.html")
     return request.app.state.templates.TemplateResponse(request, name, {"card": c})
 
 
@@ -222,6 +244,8 @@ async def bulk(request: Request):
     fmt = (form.get("format") or "").strip().lower().lstrip(".") or None
     if tab not in TABS:
         return error_page(request, f"unknown tab {tab!r}", 400)
+    if tab == "problems":
+        return error_page(request, "problems are resolved one at a time", 400)
     if action not in ("accept_suggestions", "keep_format"):
         return error_page(request, f"unknown action {action!r}", 400)
     if action == "keep_format" and (tab != "variant" or fmt is None):
@@ -308,6 +332,8 @@ async def decide_single(request: Request, item_id: int):
             return err
         if item["reason"] == "collision":
             return error_page(request, "collisions are accepted, not edited", 400)
+        if item["reason"] in PROBLEM_REASONS:
+            return error_page(request, "apply problems are resolved, not edited", 400)
         if _text(form, "file_id") != str(item["file_id"]):
             return error_page(request, "this item has changed; reload the page", 400)
         kind = _text(form, "kind")
@@ -344,5 +370,23 @@ def accept_collision(request: Request, item_id: int):
         _resolve(conn, item_id, {"accepted": True})
         conn.commit()
         return _back("collision")
+    finally:
+        conn.close()
+
+
+@router.post("/review/{item_id}/resolve")
+def resolve_problem(request: Request, item_id: int):
+    """Mark an apply problem as dealt with, then re-plan (the file is released)."""
+    conn = db.connect(request.app.state.db_path)
+    try:
+        item, err = _guard(request, conn, item_id, False)
+        if err is not None:
+            return err
+        if tab_of(item["reason"]) != "problems":
+            return error_page(request, "only apply problems can be resolved this way", 400)
+        _resolve(conn, item_id, {"resolved": True})
+        conn.commit()
+        replan(conn, load_settings(conn, request))
+        return _back("problems")
     finally:
         conn.close()

@@ -391,24 +391,28 @@ def undo_batch(conn, batch_id: int, sources: dict[str, str]) -> int:
     rows = conn.execute(
         "select * from journal where batch_id = ? order by seq desc", (batch_id,)
     ).fetchall()
-    rows = [j for j in rows if j["state"] == "done"
+    # A move whose earlier undo hit a conflict is retried (re-checked) too.
+    rows = [j for j in rows if j["state"] in ("done", "undo_conflict")
             or (j["op"] == "meta" and j["state"] in ("failed", "pending"))]
     for name in {j["source"] for j in rows}:
         if not _usable(sources.get(name)):
             raise SourceUnavailable(f"source {name!r} is not mounted and writable")
-    undone = 0
+    undone = failed = 0
     for j in rows:
         root = sources[j["source"]]
         if j["op"] == "meta":
             if not _undo_meta(conn, j, root):
+                failed += 1
                 continue
         elif j["op"] == "move" and not _undo_move(conn, j, root):
+            failed += 1
             continue
         conn.execute("update journal set state = 'undone' where id = ?", (j["id"],))
         conn.commit()
         undone += 1
+    state = "partially_undone" if failed else "undone"
     with conn:
-        conn.execute("update batches set state = 'undone' where id = ?", (batch_id,))
+        conn.execute("update batches set state = ? where id = ?", (state, batch_id))
     return undone
 
 
@@ -418,7 +422,7 @@ def _undo_move(conn, j, root: str) -> bool:
     ignore = j["dst"].rpartition("/")[2] if same_dir else None
     if _name_taken(root, j["src"], ignore) or not _exists_exact(root, j["dst"]):
         with conn:
-            conn.execute("update journal set state = 'failed' where id = ?", (j["id"],))
+            conn.execute("update journal set state = 'undo_conflict' where id = ?", (j["id"],))
             _review(conn, "undo_conflict", old["file_id"] if old else None)
         return False
     src_full = _full(root, j["src"])
@@ -470,6 +474,10 @@ def recover(conn, sources: dict[str, str]) -> int:
                 conn.execute("update journal set state = 'failed' where id = ?", (j["id"],))
                 _review(conn, "meta_failed" if j["op"] == "meta" else "recover_lost", file_id)
         fixed += 1
+    with conn:  # a batch the crash left 'pending' mid-run can be resumed or undone
+        conn.execute(
+            "update batches set state = 'interrupted' where state = 'pending' and id in"
+            " (select batch_id from journal)")
     return fixed
 
 
@@ -481,14 +489,35 @@ def _is_link(path: str) -> bool:
     return os.path.islink(path) or bool(isjunction and isjunction(path))
 
 
+# Problems whose recovery may still need files under _quarantine.
+BLOCKING_PROBLEMS = ("meta_failed", "backup_corrupt", "undo_conflict")
+
+
+def unresolved_problems(conn, source_name: str) -> int:
+    """Unresolved blocking problems of this source (or not tied to any file)."""
+    marks = ",".join("?" * len(BLOCKING_PROBLEMS))
+    return conn.execute(
+        f"select count(*) from review_items r left join files f on f.id = r.file_id"
+        f" where r.resolved = 0 and r.reason in ({marks})"
+        f" and (r.file_id is null or f.source = ?)",
+        (*BLOCKING_PROBLEMS, source_name)).fetchone()[0]
+
+
 def empty_quarantine(conn, sources: dict[str, str], source_name: str, confirm: str,
-                     include_undone: bool = False) -> int:
+                     include_undone: bool = False, force: bool = False) -> int:
     """Delete everything under <root>/_quarantine (the only deleting code).
 
     `_quarantine/_undone` (files set aside by undo) is kept unless include_undone.
+    Refuses while unresolved meta_failed/backup_corrupt/undo_conflict problems
+    exist for the source, unless `force` (the user confirmed reviewing them).
     """
     if confirm != "EMPTY":
         raise ValueError('confirmation must be "EMPTY"')
+    if not force and (n := unresolved_problems(conn, source_name)):
+        raise ValueError(
+            f"{n} unresolved apply problem(s) for {source_name!r} may still need the"
+            " quarantined backups; review them first, or tick \"I have reviewed apply"
+            " problems\"")
     root = sources.get(source_name)
     if not _usable(root):
         raise SourceUnavailable(f"source {source_name!r} is not mounted and writable")

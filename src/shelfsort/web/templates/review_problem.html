@@ -1,0 +1,7 @@
+{% set f = card.file %}
+<form class="card" method="post" action="/review/{{ card.id }}/resolve" tabindex="0" data-card>
+<strong>{{ card.reason }} #{{ card.id }}</strong>
+<div>{% if f %}{{ f.source }}: {{ f.relpath }} <small>(status {{ f.status }})</small>{% else %}<em>no file recorded</em>{% endif %}</div>
+<p>{{ card.message }}</p>
+<button type="submit">Resolve</button> <small>Marks it dealt with and re-plans the file.</small>
+</form>

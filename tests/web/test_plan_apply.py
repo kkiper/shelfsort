@@ -166,3 +166,39 @@ def test_empty_quarantine_deletes_and_keeps_undone_by_default(web):
         "source": "remote", "confirm": "EMPTY", "include_undone": "on"})
     assert r.status_code == 200
     assert not (web.src.root / "_quarantine" / "_undone").exists()
+
+
+# ---------------------------------------------- I1/I3: history and problems
+
+def seed_batch(web, state, journal_states):
+    bid = web.conn.execute(
+        "insert into batches(scope, state, created) values ('{}', ?, 'now')", (state,)).lastrowid
+    for i, js in enumerate(journal_states, 1):
+        web.conn.execute(
+            "insert into journal(batch_id, seq, op, src, dst, state, source)"
+            " values (?, ?, 'move', 'a', 'b', ?, 'remote')", (bid, i, js))
+    web.conn.commit()
+    return bid
+
+
+@pytest.mark.parametrize("state", ["done", "interrupted", "partially_undone"])
+def test_history_offers_undo(web, state):
+    bid = seed_batch(web, state, ["undone", "undo_conflict", "failed"])
+    html = web.client.get("/history").text
+    assert f"/history/{bid}/undo" in html
+    assert "problems 2" in html
+
+
+def test_empty_quarantine_blocked_by_unresolved_apply_problems(web):
+    fid = web.add("Woodworking/a.pdf")
+    web.conn.execute("insert into review_items(reason, file_id, resolved) values ('meta_failed', ?, 0)", (fid,))
+    web.conn.commit()
+    web.src.write("_quarantine/_originals/b1/j1/Woodworking/a.pdf")
+    r = web.client.post("/quarantine/empty", data={"source": "remote", "confirm": "EMPTY"})
+    assert r.status_code == 400 and "problem" in r.text.lower()
+    assert (web.src.root / "_quarantine" / "_originals").exists()
+    assert "I have reviewed apply problems" in web.client.get("/history").text
+    r = web.client.post("/quarantine/empty", data={
+        "source": "remote", "confirm": "EMPTY", "reviewed_problems": "on"})
+    assert r.status_code == 200
+    assert not (web.src.root / "_quarantine" / "_originals").exists()

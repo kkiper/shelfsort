@@ -280,3 +280,55 @@ def test_single_requires_resolvable_subject(web):
     assert web.client.post(f"/review/{item}/single", data=data).status_code == 400
     assert web.client.post(f"/review/{item}/single",
                            data={**data, "subject": "Woodworking"}).status_code == 200
+
+
+# ------------------------------------------------------- I1: problems tab
+
+def problem(web, reason, relpath="Woodworking/Chair.pdf", file_id=None):
+    if file_id is None and relpath is not None:
+        file_id = web.add(relpath, "p-" + relpath, book(), status="review")
+    cur = web.conn.execute(
+        "insert into review_items(reason, file_id, resolved) values (?, ?, 0)",
+        (reason, file_id))
+    web.conn.commit()
+    return cur.lastrowid, file_id
+
+
+def test_tab_of_never_raises():
+    from shelfsort.web.routes_review import tab_of
+
+    for reason in ("meta_failed", "move_failed", "source_changed", "undo_conflict",
+                   "backup_corrupt", "recover_lost", "keeper_missing", "something_new"):
+        assert tab_of(reason) == "problems"
+    assert tab_of("variant") == "variant"
+
+
+def test_problem_card_and_tab_render(web):
+    iid, _ = problem(web, "meta_failed")
+    r = web.client.get(f"/review/{iid}")
+    assert r.status_code == 200 and "Woodworking/Chair.pdf" in r.text
+    assert f'/review/{iid}/resolve' in r.text
+    lost, _ = problem(web, "recover_lost", relpath=None)  # no file attached
+    html = web.client.get("/review?tab=problems").text
+    assert "problems (2)" in html and "metadata" in html.lower()
+    assert f'/review/{lost}/resolve' in html
+
+
+def test_resolve_problem_releases_file_to_plan(web):
+    iid, fid = problem(web, "move_failed")
+    web.replan()
+    assert web.one("select count(*) from plan_entries where file_id=?", fid)[0] == 0
+    r = web.client.post(f"/review/{iid}/resolve", follow_redirects=False)
+    assert r.status_code == 303 and "tab=problems" in r.headers["location"]
+    assert web.one("select resolved from review_items where id=?", iid)[0] == 1
+    assert web.one("select status from files where id=?", fid)[0] == "planned"
+
+
+def test_resolve_only_for_problems_and_single_edit_refuses_problems(web, unidentified_item):
+    assert web.client.post(f"/review/{unidentified_item.id}/resolve").status_code == 400
+    iid, fid = problem(web, "keeper_missing")
+    r = web.client.post(f"/review/{iid}/single", data={
+        "file_id": fid, "title": "T", "subject": "Woodworking", "kind": "Books"})
+    assert r.status_code == 400
+    assert web.client.post("/review/bulk", data={
+        "tab": "problems", "action": "accept_suggestions"}).status_code == 400

@@ -213,9 +213,48 @@ def test_undo_conflict_when_original_reoccupied(fixture_source, conn, settings):
     assert undo_batch(conn, bid, fixture_source.sources) == 3
     assert fixture_source.read("Gardening/compost.pdf") == b"someone elses file"
     assert fixture_source.exists("Gardening/Plans & Articles/Compost.pdf")
-    assert count(conn, "select count(*) from journal where state='failed'") == 1
+    assert count(conn, "select count(*) from journal where state='undo_conflict'") == 1
     assert count(conn, "select count(*) from review_items where reason='undo_conflict'") == 1
     assert file_row(conn, "Gardening/Plans & Articles/Compost.pdf")["status"] == "organized"
+    assert count(conn, "select count(*) from batches where state='partially_undone'") == 1
+    # once the user clears the conflict, Undo retries the remaining row
+    os.rename(fixture_source.path("Gardening/compost.pdf"), fixture_source.path("elsewhere.pdf"))
+    assert undo_batch(conn, bid, fixture_source.sources) == 1
+    assert fixture_source.exists("Gardening/compost.pdf")
+    assert count(conn, "select count(*) from batches where state='undone'") == 1
+
+
+def test_empty_quarantine_refuses_with_unresolved_problems(fixture_source, conn, add_file):
+    fid = add_file("remote", "Woodworking/x.pdf")
+    other = add_file("elsewhere", "y.pdf")
+    fixture_source.write("_quarantine/q.pdf", b"q")
+    for reason, f in (("backup_corrupt", other), ("collision", fid)):
+        conn.execute("insert into review_items(reason, file_id) values (?, ?)", (reason, f))
+    conn.commit()
+    assert empty_quarantine(conn, fixture_source.sources, "remote", "EMPTY") == 1  # not ours
+    fixture_source.write("_quarantine/q.pdf", b"q")
+    for reason in ("meta_failed", "backup_corrupt", "undo_conflict"):
+        conn.execute("delete from review_items")
+        conn.execute("insert into review_items(reason, file_id) values (?, ?)", (reason, fid))
+        conn.commit()
+        with pytest.raises(ValueError, match="problem"):
+            empty_quarantine(conn, fixture_source.sources, "remote", "EMPTY")
+        assert fixture_source.exists("_quarantine/q.pdf")
+    assert empty_quarantine(conn, fixture_source.sources, "remote", "EMPTY", force=True) == 1
+
+
+def test_recover_marks_crashed_pending_batch_interrupted(conn, fixture_source, insert_journal):
+    bid = conn.execute(
+        "insert into batches(scope, state, created) values ('{}', 'pending', 'now')").lastrowid
+    empty = conn.execute(
+        "insert into batches(scope, state, created) values ('{}', 'pending', 'now')").lastrowid
+    conn.commit()
+    fixture_source.write("new/a.pdf", b"x")
+    insert_journal(state="done", src="old/a.pdf", dst="new/a.pdf", batch_id=bid)
+    recover(conn, fixture_source.sources)
+    states = dict(conn.execute("select id, state from batches").fetchall())
+    assert states[bid] == "interrupted" and states[empty] == "pending"
+    assert undo_batch(conn, bid, fixture_source.sources) == 1
 
 
 def test_meta_failed_continues_batch(fixture_source, conn, settings, monkeypatch):

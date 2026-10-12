@@ -21,6 +21,7 @@ def _render(request: Request, message: str | None = None):
             b["counts"] = {r[0]: r[1] for r in conn.execute(
                 "select state, count(*) from journal where batch_id = ? group by state",
                 (b["id"],))}
+            b["problems"] = b["counts"].get("failed", 0) + b["counts"].get("undo_conflict", 0)
         sources = list(load_settings(conn, request).sources)
     finally:
         conn.close()
@@ -59,7 +60,8 @@ async def empty(request: Request):
         try:
             n = empty_quarantine(
                 conn, sources, str(form.get("source") or ""), str(form.get("confirm") or ""),
-                include_undone="include_undone" in form)
+                include_undone="include_undone" in form,
+                force="reviewed_problems" in form)
         except ValueError as exc:  # includes SourceUnavailable
             return error_page(request, str(exc), 400)
     finally:

@@ -3,7 +3,7 @@
 <h1>Review</h1>
 <p class="tabs">{% for t in tabs %}<a href="/review?tab={{ t }}"{% if t == tab %} class="on"{% endif %}>{{ t }} ({{ counts[t] }})</a>{% endfor %}</p>
 
-{% if cards %}
+{% if cards and tab != "problems" %}
 <form method="post" action="/review/bulk">
 <input type="hidden" name="tab" value="{{ tab }}">
 <button type="submit" name="action" value="accept_suggestions">{% if group_tab %}Keep all in every group{% else %}Accept all suggestions{% endif %}</button>
@@ -15,7 +15,7 @@
 {% endif %}
 
 {% for card in cards %}
-{% if card.members is defined %}{% include "review_group.html" %}{% else %}{% include "review_single.html" %}{% endif %}
+{% if card.members is defined %}{% include "review_group.html" %}{% elif card.tab == "problems" %}{% include "review_problem.html" %}{% else %}{% include "review_single.html" %}{% endif %}
 {% else %}
 <p>Nothing to review in this tab.</p>
 {% endfor %}

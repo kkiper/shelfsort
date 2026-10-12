@@ -4,14 +4,15 @@
 {% if message %}<div class="warn">{{ message }}</div>{% endif %}
 <div id="job" data-poll="/job">{% include "job.html" %}</div>
 <table>
-<tr><th>Batch</th><th>Scope</th><th>State</th><th>Created</th><th>Journal</th><th></th></tr>
+<tr><th>Batch</th><th>Scope</th><th>State</th><th>Created</th><th>Journal</th><th>Problems</th><th></th></tr>
 {% for b in batches %}
 <tr><td>{{ b.id }}</td><td>{{ b.scope }}</td><td>{{ b.state }}</td><td>{{ b.created }}</td>
 <td>{% for k, n in b.counts.items() %}{{ k }} {{ n }}{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}</td>
-<td>{% if b.state in ("done", "interrupted") %}
+<td>{% if b.problems %}problems {{ b.problems }} (<a href="/review?tab=problems">review</a>){% else %}none{% endif %}</td>
+<td>{% if b.state in ("done", "interrupted", "partially_undone") %}
 <form method="post" action="/history/{{ b.id }}/undo" data-ajax><button type="submit">Undo</button></form>{% endif %}</td></tr>
 {% else %}
-<tr><td colspan="6">No batches yet.</td></tr>
+<tr><td colspan="7">No batches yet.</td></tr>
 {% endfor %}
 </table>
 
@@ -20,6 +21,7 @@
 <form method="post" action="/quarantine/empty">
 <label>Source <select name="source">{% for name in sources %}<option>{{ name }}</option>{% endfor %}</select></label>
 <label>Type EMPTY to confirm <input type="text" name="confirm" autocomplete="off"></label>
+<label><input type="checkbox" name="reviewed_problems"> I have reviewed apply problems (needed while metadata or undo problems for this source are unresolved)</label>
 <label><input type="checkbox" name="include_undone"> Also delete files set aside by undo (<code>_quarantine/_undone</code>)</label>
 <p><button type="submit">Empty quarantine</button></p>
 </form>
