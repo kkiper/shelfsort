@@ -105,3 +105,61 @@ def tmp_source(tmp_path):
     src = TmpSource()
     src.root.mkdir()
     return src
+
+
+@pytest.fixture
+def fixture_source(tmp_source):
+    """tmp_source plus a small tree and path/read/exists helpers."""
+    tmp_source.path = lambda rel: str(tmp_source.root.joinpath(*rel.split("/")))
+    tmp_source.read = lambda rel: tmp_source.root.joinpath(*rel.split("/")).read_bytes()
+    tmp_source.exists = lambda rel: tmp_source.root.joinpath(*rel.split("/")).exists()
+    tmp_source.write("Woodworking/All-weather-Morris-Chair3.pdf", b"morris chair")
+    tmp_source.write("Woodworking/shop_stool.pdf", b"stool")
+    tmp_source.write("Gardening/herb-notes.pdf", b"herbs")
+    tmp_source.write("Gardening/compost.pdf", b"compost")
+    return tmp_source
+
+
+@pytest.fixture
+def batch_with_entry(conn):
+    """Insert a file, a plan entry and a pending batch for it directly."""
+    from shelfsort.scan import scan_sources
+
+    def _make(src, relpath, action="move", target=None, write_meta=0):
+        scan_sources(conn, src.sources)
+        fid = conn.execute("select id from files where source=? and relpath=?",
+                           (src.name, relpath)).fetchone()["id"]
+        if target is None:
+            target = f"_quarantine/{relpath}" if action == "quarantine" else relpath
+        conn.execute(
+            "insert into plan_entries(file_id, action, target_relpath, write_meta) "
+            "values (?, ?, ?, ?)", (fid, action, target, write_meta))
+        cur = conn.execute(
+            "insert into batches(scope, state, created) values ('{}', 'pending', 'now')")
+        conn.execute("insert into batch_files values (?, ?)", (cur.lastrowid, fid))
+        conn.commit()
+        return cur.lastrowid
+
+    return _make
+
+
+@pytest.fixture
+def insert_journal(conn):
+    def _insert(state="pending", src=None, dst=None, source="remote", op="move", batch_id=None):
+        if batch_id is None:
+            batch_id = conn.execute(
+                "insert into batches(scope, state, created) values ('{}', 'done', 'now')"
+            ).lastrowid
+        cur = conn.execute(
+            "insert into journal(batch_id, seq, op, src, dst, state, source) "
+            "values (?, 1, ?, ?, ?, ?, ?)", (batch_id, op, src, dst, state, source))
+        conn.commit()
+        return cur.lastrowid
+
+    return _insert
+
+
+@pytest.fixture
+def journal_state(conn):
+    return lambda jid: conn.execute(
+        "select state from journal where id=?", (jid,)).fetchone()["state"]
