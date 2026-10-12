@@ -24,6 +24,7 @@
 <label>Cover story <input type="text" name="cover_story" value="{{ f.ident.cover_story or '' }}"></label>
 <label>Subject <input type="text" name="subject" value="{{ f.subject }}"></label>
 <label>Kind <select name="kind">
+<option value="">choose&hellip;</option>
 {% for k in card.kinds %}<option value="{{ k }}"{% if k == f.kind %} selected{% endif %}>{{ k }}</option>{% endfor %}
 </select></label>
 <button type="submit">Save</button>

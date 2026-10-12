@@ -29,7 +29,13 @@
               box.id = "ajax-error"; box.className = "error";
               f.parentNode.insertBefore(box, f);
             }
-            box.textContent = t.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || ("Request failed: " + r.status);
+            var doc = new DOMParser().parseFromString(t, "text/html");
+            var src = doc.querySelector(".error") || doc.querySelector("h1");
+            if (!src) {
+              doc.querySelectorAll("style, script, title").forEach(function (n) { n.remove(); });
+              src = doc.body;
+            }
+            box.textContent = (src.textContent || "").replace(/\s+/g, " ").trim() || ("Request failed: " + r.status);
           });
         })
         .catch(function () { location.reload(); });

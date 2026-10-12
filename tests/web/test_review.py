@@ -215,8 +215,24 @@ def test_bulk_keep_format_only_on_variant_tab(web, tab):
 
 
 def test_keep_format_button_only_on_variant_tab(web, two_variant_groups_one_without_epub):
+    web.add("Woodworking/Chair2.pdf", "c9", book("Chair"))  # same title, other content: near group
+    web.replan()
+    assert web.one("select count(*) from review_items where reason='near' and resolved=0")[0] == 1
+    near = web.client.get("/review?tab=near").text
+    assert 'data-card' in near and "keep_format" not in near
     assert "keep_format" in web.client.get("/review?tab=variant").text
-    assert "keep_format" not in web.client.get("/review?tab=near").text
+
+
+def test_single_card_preselects_classified_kind_and_blank_otherwise(web, unidentified_item):
+    fid = web.add("misc/x.pdf", "m1", Identity(magazine="Wood", issue_date="2002-04",
+                                                 confidence=0.9), pages=60)
+    web.replan()
+    item = web.one("select id from review_items where file_id=?", fid)[0]
+    html = web.client.get(f"/review/{item}").text
+    assert '<option value="Magazines" selected>' in html and "selected>" not in html.replace(
+        '<option value="Magazines" selected>', "")
+    blank = web.client.get(f"/review/{unidentified_item.id}").text
+    assert 'choose&hellip;' in blank and "selected>" not in blank
 
 
 def test_keep_in_one_group_beats_quarantine_in_another(web):
