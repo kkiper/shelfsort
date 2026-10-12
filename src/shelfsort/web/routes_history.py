@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
+from starlette.datastructures import FormData
 from fastapi.responses import HTMLResponse
 
 from shelfsort import db
 from shelfsort.apply import empty_quarantine, undo_batch
-from shelfsort.web.routes_review import busy_response, error_page, load_settings
+from shelfsort.web.routes_review import busy_response, error_page, form_data, load_settings
 
 router = APIRouter()
 
@@ -49,8 +50,7 @@ def undo(request: Request, batch_id: int):
 
 
 @router.post("/quarantine/empty")
-async def empty(request: Request):
-    form = await request.form()
+def empty(request: Request, form: FormData = Depends(form_data)):
     busy = busy_response(request)
     if busy is not None:
         return busy

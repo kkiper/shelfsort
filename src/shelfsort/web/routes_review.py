@@ -7,7 +7,8 @@ import re
 import sqlite3
 from dataclasses import asdict
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
+from starlette.datastructures import FormData
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from shelfsort import db
@@ -63,6 +64,12 @@ class BadRequest(ValueError):
 def tab_of(reason: str) -> str:
     """Tab for a review reason; unknown reasons land in "problems" (never raises)."""
     return next((t for t, rs in TABS.items() if reason in rs), "problems")
+
+
+async def form_data(request: Request) -> FormData:
+    """Read the posted form on the event loop, so endpoints can be plain `def`
+    (FastAPI runs those in its threadpool; DB/CPU work never blocks the loop)."""
+    return await request.form()
 
 
 def error_page(request: Request, message: str, status: int) -> Response:
@@ -238,8 +245,7 @@ def _guard(request: Request, conn: sqlite3.Connection, item_id: int, group: bool
 
 
 @router.post("/review/bulk")
-async def bulk(request: Request):
-    form = await request.form()
+def bulk(request: Request, form: FormData = Depends(form_data)):
     tab, action = form.get("tab"), form.get("action")
     fmt = (form.get("format") or "").strip().lower().lstrip(".") or None
     if tab not in TABS:
@@ -296,8 +302,7 @@ def _bulk_singles(conn, s: Settings, items) -> None:
 
 
 @router.post("/review/{item_id}/group")
-async def decide_group(request: Request, item_id: int):
-    form = await request.form()
+def decide_group(request: Request, item_id: int, form: FormData = Depends(form_data)):
     conn = db.connect(request.app.state.db_path)
     try:
         item, err = _guard(request, conn, item_id, True)
@@ -323,8 +328,7 @@ async def decide_group(request: Request, item_id: int):
 
 
 @router.post("/review/{item_id}/single")
-async def decide_single(request: Request, item_id: int):
-    form = await request.form()
+def decide_single(request: Request, item_id: int, form: FormData = Depends(form_data)):
     conn = db.connect(request.app.state.db_path)
     try:
         item, err = _guard(request, conn, item_id, False)

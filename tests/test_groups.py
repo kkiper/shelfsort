@@ -87,3 +87,36 @@ def test_exact_groups_untouched(conn, files):
     conn.commit()
     build_groups(conn, [], 90)
     assert types(conn) == ["exact"]
+
+
+# ------------------------------------------------------------ I4: scale
+
+def test_possible_groups_scale_and_stay_small(conn):
+    import random
+    import string
+    import time
+    from collections import Counter
+
+    from shelfsort.groups import GroupInput, build_groups
+    from shelfsort.models import Identity
+
+    rng = random.Random(7)
+    vocab = ["".join(rng.choices(string.ascii_lowercase, k=6)) for _ in range(400)]
+    items = []
+    for i in range(3000):
+        fid = conn.execute(
+            "insert into files(source, relpath, size, mtime, sha256, ext, status)"
+            " values ('r', ?, 1, 0, ?, 'pdf', 'new')", (f"W/{i}.pdf", f"s{i}")).lastrowid
+        title = f"woodworking projects volume {rng.choice(vocab)} {rng.choice(vocab)}"
+        items.append(GroupInput(fid, "pdf", f"s{i}", "Woodworking",
+                                Identity(title=title, authors=["Ann"], confidence=0.9),
+                                f"{i}.pdf"))
+    conn.commit()
+    t = time.perf_counter()
+    build_groups(conn, items, 90)
+    elapsed = time.perf_counter() - t
+    sizes = Counter(r[0] for r in conn.execute(
+        "select gm.group_id from group_members gm join groups g on g.id = gm.group_id"
+        " where g.type = 'possible'"))
+    assert elapsed < 10, elapsed
+    assert sizes and max(sizes.values()) <= 20

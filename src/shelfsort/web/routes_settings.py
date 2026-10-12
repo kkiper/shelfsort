@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+from starlette.datastructures import FormData
 from fastapi.responses import HTMLResponse
 
 from shelfsort import db
 from shelfsort import settings as settings_mod
 from shelfsort.settings import Settings
+from shelfsort.web.routes_review import form_data
 
 router = APIRouter()
 
@@ -93,8 +95,7 @@ def show(request: Request):
 
 
 @router.post("/settings", response_class=HTMLResponse)
-async def save(request: Request):
-    form = await request.form()
+def save(request: Request, form: FormData = Depends(form_data)):
     conn = db.connect(request.app.state.db_path)
     try:
         current = settings_mod.load(conn)

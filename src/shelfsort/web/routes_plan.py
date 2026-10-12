@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
+from starlette.datastructures import FormData
 from fastapi.responses import HTMLResponse
 
 from shelfsort import db
 from shelfsort.apply import create_batch, run_batch
-from shelfsort.web.routes_review import load_settings
+from shelfsort.web.routes_review import form_data, load_settings
 
 router = APIRouter()
 
@@ -52,8 +53,8 @@ def plan(request: Request, source: str = "", subject: str = "", kind: str = "", 
 
 
 @router.post("/apply", status_code=202)
-async def apply_plan(request: Request):
-    scope = _scope(await request.form())
+def apply_plan(request: Request, form: FormData = Depends(form_data)):
+    scope = _scope(form)
     st = request.app.state
 
     def job(conn, progress):

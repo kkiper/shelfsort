@@ -15,6 +15,12 @@ from shelfsort.names import matching_key
 _GROUP_TYPES = ("variant", "near", "possible")
 _MARKS = ",".join("?" * len(_GROUP_TYPES))
 _MIN_TOKEN = 3
+# Scale guards: a token in more than _MAX_DF titles of one subject (e.g.
+# "woodworking") says nothing about similarity and would make the candidate
+# pair count quadratic; a possible-match group larger than _MAX_COMPONENT
+# files is not reviewable, so unions that would exceed it are not made.
+_MAX_DF = 50
+_MAX_COMPONENT = 20
 
 
 @dataclass
@@ -63,6 +69,8 @@ def _possible_components(
             index[(n[1], t)].append(n)
     shared: dict[tuple, int] = defaultdict(int)
     for ns in index.values():
+        if len(ns) > _MAX_DF:
+            continue
         for a, b in combinations(sorted(ns), 2):
             shared[(a, b)] += 1
     # Same first token but no other shared token: still a candidate pair.
@@ -71,10 +79,13 @@ def _possible_components(
         if f is not None:
             by_first[(n[1], f)].append(n)
     for ns in by_first.values():
+        if len(ns) > _MAX_DF:
+            continue
         for a, b in combinations(sorted(ns), 2):
             shared.setdefault((a, b), 0)
 
     parent = {n: n for n in nodes}
+    size = {n: len(nodes[n]) for n in nodes}  # files per component root
 
     def find(x):
         while parent[x] != x:
@@ -87,8 +98,12 @@ def _possible_components(
             continue
         if n < 2 and (first[a] is None or first[a] != first[b]):
             continue
+        ra, rb = find(a), find(b)
+        if ra == rb or size[ra] + size[rb] > _MAX_COMPONENT:
+            continue  # same group already, or the group would be too big
         if fuzz.token_set_ratio(titles[a], titles[b]) >= threshold:
-            parent[find(a)] = find(b)
+            parent[ra] = rb
+            size[rb] += size[ra]
     comps: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
     for n in nodes:
         comps[find(n)].append(n)

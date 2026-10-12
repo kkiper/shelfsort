@@ -107,3 +107,19 @@ def test_module_app_is_lazy(monkeypatch, tmp_path):
     assert not (tmp_path / "lazy.db").exists()
     assert app_mod.app.title == "shelfsort"
     assert (tmp_path / "lazy.db").exists()
+
+
+def test_no_route_runs_sync_work_on_the_event_loop():
+    """I4: every endpoint is a plain def (FastAPI runs it in the threadpool)."""
+    import inspect
+
+    from shelfsort.web import (
+        routes_dashboard, routes_files, routes_history, routes_plan, routes_review,
+        routes_settings,
+    )
+
+    endpoints = [r.endpoint for m in (routes_dashboard, routes_files, routes_history,
+                                      routes_plan, routes_review, routes_settings)
+                 for r in m.router.routes]
+    assert endpoints
+    assert [e.__name__ for e in endpoints if inspect.iscoroutinefunction(e)] == []
