@@ -27,14 +27,16 @@ def _isbns_in_run(run: str) -> list[str]:
     i = 0
     while i < len(groups):
         digits = ""
-        hit = None
+        best10 = best13 = None
         for j in range(i, len(groups)):
             digits += groups[j].upper()
             if len(digits) > 13:
                 break
-            if len(digits) in (10, 13) and valid_isbn(digits):
-                hit = (j, digits)
-                break
+            if len(digits) == 13 and valid_isbn(digits):
+                best13 = (j, digits)
+            elif len(digits) == 10 and valid_isbn(digits):
+                best10 = (j, digits)
+        hit = best13 or best10
         if hit:
             found.append(hit[1])
             i = hit[0] + 1

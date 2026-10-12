@@ -50,3 +50,11 @@ def test_requires_digit_boundaries():
 def test_invalid_checksum_and_empty():
     assert find_isbns("ISBN 9781462923226") == []
     assert find_isbns("") == []
+
+
+def test_hyphenated_13_whose_prefix_is_valid_10_keeps_the_13():
+    assert find_isbns("978-0-000003-12-6") == ["9780000003126"]
+
+
+def test_hyphenated_13_followed_by_unrelated_groups():
+    assert find_isbns("978-1-4629-2322-9 2020 55") == ["9781462923229"]
