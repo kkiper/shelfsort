@@ -423,3 +423,112 @@ def test_empty_quarantine_refuses_junction(conn, fixture_source, tmp_path):
     with pytest.raises(ValueError):
         empty_quarantine(conn, fixture_source.sources, "remote", "EMPTY")
     assert (outside / "precious.pdf").read_bytes() == b"keep"
+
+
+def _backup_paths(root):
+    return [os.path.join(dp, fn) for dp, _, fns in os.walk(os.path.join(root, "_quarantine", "_originals"))
+            for fn in fns]
+
+
+def _applied_with_meta(fixture_source, conn, settings, monkeypatch, batch_with_entry):
+    bid = batch_with_entry(fixture_source, "Gardening/compost.pdf", target="G/c.pdf", write_meta=1)
+    _ident(conn, file_row(conn, "Gardening/compost.pdf")["id"])
+    monkeypatch.setattr(apply, "write_metadata", _fake_writer())
+    run_batch(conn, bid, fixture_source.sources, settings)
+    return bid
+
+
+def test_truncated_backup_is_never_restored_sha(fixture_source, conn, settings, monkeypatch, batch_with_entry):
+    bid = _applied_with_meta(fixture_source, conn, settings, monkeypatch, batch_with_entry)
+    [bk] = _backup_paths(str(fixture_source.root))
+    with open(bk, "wb") as f:
+        f.write(b"comp")  # truncated
+    undo_batch(conn, bid, fixture_source.sources)
+    assert fixture_source.read("Gardening/compost.pdf") == b"compostEMBEDDED"  # untouched
+    assert not fixture_source.exists("_quarantine/_undone")
+    assert count(conn, "select count(*) from review_items where reason='backup_corrupt'") == 1
+    assert count(conn, "select count(*) from journal where op='meta' and state='failed'") == 1
+
+
+def test_truncated_backup_is_never_restored_size_only(fixture_source, conn, settings, monkeypatch, batch_with_entry):
+    bid = _applied_with_meta(fixture_source, conn, settings, monkeypatch, batch_with_entry)
+    row = conn.execute("select id, old_json from journal where op='meta'").fetchone()
+    info = json.loads(row["old_json"])
+    info["backups"] = {}  # as after a crash: no sha recorded
+    conn.execute("update journal set state='pending', old_json=? where id=?", (json.dumps(info), row["id"]))
+    conn.commit()
+    [bk] = _backup_paths(str(fixture_source.root))
+    with open(bk, "wb") as f:
+        f.write(b"comp")
+    undo_batch(conn, bid, fixture_source.sources)
+    assert fixture_source.read("Gardening/compost.pdf") == b"compostEMBEDDED"
+    assert not fixture_source.exists("_quarantine/_undone")
+    assert count(conn, "select count(*) from review_items where reason='backup_corrupt'") == 1
+
+
+def test_size_only_valid_backup_is_restored(fixture_source, conn, settings, monkeypatch, batch_with_entry):
+    bid = _applied_with_meta(fixture_source, conn, settings, monkeypatch, batch_with_entry)
+    row = conn.execute("select id, old_json from journal where op='meta'").fetchone()
+    info = json.loads(row["old_json"])
+    info["backups"] = {}
+    conn.execute("update journal set state='pending', old_json=? where id=?", (json.dumps(info), row["id"]))
+    conn.commit()
+    undo_batch(conn, bid, fixture_source.sources)
+    assert fixture_source.read("Gardening/compost.pdf") == b"compost"
+
+
+def test_backup_is_atomic_no_temp_left(tmp_path):
+    from shelfsort.writemeta import backup_original
+
+    (tmp_path / "a.pdf").write_bytes(b"abc")
+    dest = backup_original(str(tmp_path), "a.pdf", "bk/j1")
+    assert open(dest, "rb").read() == b"abc"
+    assert os.listdir(os.path.dirname(dest)) == ["a.pdf"]
+
+
+def test_empty_quarantine_keeps_undone_by_default(conn, fixture_source):
+    fixture_source.write("_quarantine/_undone/j1/x.pdf", b"u")
+    fixture_source.write("_quarantine/q.pdf", b"q")
+    assert empty_quarantine(conn, fixture_source.sources, "remote", "EMPTY") == 1
+    assert fixture_source.exists("_quarantine/_undone/j1/x.pdf") and not fixture_source.exists("_quarantine/q.pdf")
+    assert empty_quarantine(conn, fixture_source.sources, "remote", "EMPTY", include_undone=True) == 1
+    assert not fixture_source.exists("_quarantine/_undone")
+
+
+def test_empty_quarantine_unknown_source(conn, fixture_source):
+    with pytest.raises(SourceUnavailable):
+        empty_quarantine(conn, fixture_source.sources, "nope", "EMPTY")
+
+
+def test_create_batch_skips_review_files(fixture_source, conn):
+    bid = plan_and_batch(conn, fixture_source)
+    conn.execute("update files set status='review' where relpath='Gardening/compost.pdf'")
+    conn.commit()
+    b2 = create_batch(conn, {})
+    assert count(conn, f"select count(*) from batch_files where batch_id={b2}") == 3
+    assert file_row(conn, "Gardening/compost.pdf")["status"] == "review"
+    assert bid != b2
+
+
+def test_unknown_source_mid_batch_interrupts(fixture_source, conn, settings):
+    bid = plan_and_batch(conn, fixture_source)
+    cur = conn.execute("insert into files(source, relpath, size, mtime, ext, status) "
+                       "values ('other', 'z.pdf', 1, 0.0, 'pdf', 'planned')")
+    conn.execute("insert into plan_entries(file_id, action, target_relpath) values (?, 'move', 'Z/z.pdf')",
+                 (cur.lastrowid,))
+    conn.execute("insert into batch_files values (?, ?)", (bid, cur.lastrowid))
+    conn.commit()
+    r = run_batch(conn, bid, fixture_source.sources, settings)
+    assert r.state == "interrupted" and r.done == 4
+    assert count(conn, "select count(*) from batches where state='interrupted'") == 1
+
+
+def test_resume_does_not_reprocess_review_file(fixture_source, conn, settings):
+    bid = plan_and_batch(conn, fixture_source)
+    os.remove(fixture_source.path("Gardening/compost.pdf"))
+    assert run_batch(conn, bid, fixture_source.sources, settings).skipped == 1
+    conn.execute("update batches set state='interrupted'")
+    conn.commit()
+    r = run_batch(conn, bid, fixture_source.sources, settings)
+    assert (r.done, r.skipped) == (0, 0)
+    assert count(conn, "select count(*) from review_items where reason='source_changed'") == 1

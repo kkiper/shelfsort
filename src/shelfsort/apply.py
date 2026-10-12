@@ -84,7 +84,7 @@ def _usable(root: str | None) -> bool:
 
 
 def create_batch(conn: sqlite3.Connection, scope: dict) -> int:
-    where = ["f.status not in ('organized', 'quarantined')"]
+    where = ["f.status not in ('organized', 'quarantined', 'review')"]
     args: list = []
     if scope.get("source"):
         where.append("f.source = ?")
@@ -155,28 +155,42 @@ def _write_meta(conn, batch_id, source, root, f, new_rel, sidecar_all) -> None:
     stem = os.path.splitext(new_rel)[0]
     info = {
         "file_id": f["id"],
+        "size": os.stat(_full(root, new_rel)).st_size,  # pre-write size
         "sidecars": [
-            {"rel": rel, "existed": os.path.lexists(_full(root, rel))}
+            {"rel": rel, "existed": os.path.lexists(_full(root, rel)),
+             "size": os.path.getsize(_full(root, rel)) if os.path.lexists(_full(root, rel)) else None}
             for rel in (stem + ".opf", stem + ".cover.jpg")
         ],
         "written": [],
+        "backups": {},
     }
     jid = _journal(conn, batch_id, "meta", source, None, new_rel, "pending", json.dumps(info))
     info["backup_dir"] = f"{_ORIGINALS}/b{batch_id}/j{jid}"
     conn.execute("update journal set old_json = ? where id = ?", (json.dumps(info), jid))
     conn.commit()  # journaled before the file is touched
+    state = "failed"
     try:
         written = write_metadata(root, new_rel, ident, f["ext"], sidecar_all,
                                  backup_dir=info["backup_dir"])
+        info["written"] = [_rel(root, p) for p in written]
+        state = "done"
     except Exception:
-        conn.execute("update journal set state = 'failed' where id = ?", (jid,))
         _review(conn, "meta_failed", f["id"])
+    finally:
+        info["backups"] = {rel: sha256_file(p) for rel, p in _backup_files(root, info["backup_dir"])}
+        conn.execute("update journal set state = ?, old_json = ? where id = ?",
+                     (state, json.dumps(info), jid))
         conn.commit()
-        return
-    info["written"] = [_rel(root, p) for p in written]
-    conn.execute("update journal set state = 'done', old_json = ? where id = ?",
-                 (json.dumps(info), jid))
-    conn.commit()
+
+
+def _backup_files(root: str, backup_dir: str):
+    """Yield (rel, abs path) of complete backups (temp files excluded)."""
+    base = _full(root, backup_dir)
+    for dp, _, fns in os.walk(base):
+        for fn in fns:
+            if fn.startswith(".bak-") and fn.endswith(".tmp"):
+                continue
+            yield _rel(base, os.path.join(dp, fn)), os.path.join(dp, fn)
 
 
 def _update_file_row(conn, file_id: int, root: str, rel: str, status: str) -> None:
@@ -304,21 +318,38 @@ def _copy_back(src: str, dst: str) -> None:
         raise
 
 
-def _undo_meta(j, root: str) -> None:
+def _backups_valid(j, root: str, info: dict) -> bool:
+    """Check each backup against its recorded sha, else the recorded pre-write size."""
+    sizes = {j["dst"]: info.get("size")}
+    sizes.update({sc["rel"]: sc.get("size") for sc in info.get("sidecars", [])})
+    for rel, path in _backup_files(root, info["backup_dir"]):
+        sha = info.get("backups", {}).get(rel)
+        if sha is not None:
+            if sha256_file(path) != sha:
+                return False
+        elif sizes.get(rel) is None or os.path.getsize(path) != sizes[rel]:
+            return False
+    return True
+
+
+def _undo_meta(conn, j, root: str) -> bool:
     info = json.loads(j["old_json"]) if j["old_json"] else {}
+    bdir = info.get("backup_dir")
+    has_backups = bool(bdir) and os.path.isdir(_full(root, bdir))
+    if has_backups and not _backups_valid(j, root, info):
+        with conn:
+            conn.execute("update journal set state = 'failed' where id = ?", (j["id"],))
+            _review(conn, "backup_corrupt", info.get("file_id"))
+        return False
     for sc in info.get("sidecars", []):
         if not sc["existed"] and os.path.lexists(_full(root, sc["rel"])):
             _set_aside(root, j["id"], sc["rel"])
-    bdir = info.get("backup_dir")
-    if not bdir or not os.path.isdir(_full(root, bdir)):
-        return
-    for dp, _, fns in os.walk(_full(root, bdir)):
-        for fn in fns:
-            backup = os.path.join(dp, fn)
-            rel = _rel(_full(root, bdir), backup)
+    if has_backups:
+        for rel, backup in _backup_files(root, bdir):
             if os.path.lexists(_full(root, rel)):
                 _set_aside(root, j["id"], rel)
             _copy_back(backup, _full(root, rel))
+    return True
 
 
 def undo_batch(conn, batch_id: int, sources: dict[str, str]) -> int:
@@ -339,7 +370,8 @@ def undo_batch(conn, batch_id: int, sources: dict[str, str]) -> int:
     for j in rows:
         root = sources[j["source"]]
         if j["op"] == "meta":
-            _undo_meta(j, root)
+            if not _undo_meta(conn, j, root):
+                continue
         elif j["op"] == "move" and not _undo_move(conn, j, root):
             continue
         conn.execute("update journal set state = 'undone' where id = ?", (j["id"],))
@@ -419,13 +451,17 @@ def _is_link(path: str) -> bool:
     return os.path.islink(path) or bool(isjunction and isjunction(path))
 
 
-def empty_quarantine(conn, sources: dict[str, str], source_name: str, confirm: str) -> int:
-    """Delete everything under <root>/_quarantine (the only deleting code)."""
+def empty_quarantine(conn, sources: dict[str, str], source_name: str, confirm: str,
+                     include_undone: bool = False) -> int:
+    """Delete everything under <root>/_quarantine (the only deleting code).
+
+    `_quarantine/_undone` (files set aside by undo) is kept unless include_undone.
+    """
     if confirm != "EMPTY":
         raise ValueError('confirmation must be "EMPTY"')
-    root = sources[source_name]
+    root = sources.get(source_name)
     if not _usable(root):
-        raise ValueError(f"source {source_name!r} is not mounted and writable")
+        raise SourceUnavailable(f"source {source_name!r} is not mounted and writable")
     qdir = os.path.join(root, _QUARANTINE)
     if _is_link(qdir) or (
         os.path.exists(qdir)
@@ -441,6 +477,8 @@ def empty_quarantine(conn, sources: dict[str, str], source_name: str, confirm: s
     deleted = 0
     if os.path.isdir(qdir):
         for entry in os.listdir(qdir):
+            if entry == "_undone" and not include_undone:
+                continue
             path = os.path.join(qdir, entry)
             if os.path.isdir(path) and not _is_link(path):
                 deleted += sum(len(files) for _, _, files in os.walk(path))

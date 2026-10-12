@@ -112,7 +112,16 @@ def backup_original(
     dest = os.path.join(source_root, *backup_dir.split("/"), *relpath.split("/"))
     if not os.path.exists(dest):
         os.makedirs(os.path.dirname(dest), exist_ok=True)
-        shutil.copy2(os.path.join(source_root, relpath), dest)
+        # Copy to a temp file and rename, so a backup exists only if complete.
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dest), prefix=".bak-", suffix=".tmp")
+        os.close(fd)
+        try:
+            shutil.copy2(os.path.join(source_root, relpath), tmp)
+            os.replace(tmp, dest)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise
     return dest
 
 
