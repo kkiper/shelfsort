@@ -137,7 +137,7 @@ def _review(conn, reason: str, file_id: int | None) -> None:
     )
 
 
-def _best_identity(conn, file_id: int) -> Identity | None:
+def best_identity(conn, file_id: int) -> Identity | None:
     rows = conn.execute(
         "select method, json, confidence from identities where file_id = ?", (file_id,)
     ).fetchall()
@@ -149,7 +149,7 @@ def _best_identity(conn, file_id: int) -> Identity | None:
 
 
 def _write_meta(conn, batch_id, source, root, f, new_rel, sidecar_all) -> None:
-    ident = _best_identity(conn, f["id"])
+    ident = best_identity(conn, f["id"])
     if ident is None:
         return
     stem = os.path.splitext(new_rel)[0]

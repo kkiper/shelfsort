@@ -13,13 +13,13 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
 from shelfsort import pdftext
-from shelfsort.apply import _best_identity
+from shelfsort.apply import best_identity
 from shelfsort.classify import classify_kind, classify_subject
 from shelfsort.dedupe import find_exact_duplicates
 from shelfsort.groups import GroupInput, build_groups
 from shelfsort.identify import identify_file
 from shelfsort.models import FileRecord, FileStatus, Identity, Kind
-from shelfsort.plan import PlanInput, _clean_filename_title, build_plan
+from shelfsort.plan import PlanInput, clean_filename_title, build_plan
 from shelfsort.scan import scan_sources
 from shelfsort.settings import Settings
 from shelfsort.tools import ToolError
@@ -123,7 +123,7 @@ def run_scan_pipeline(
             it.rec.pages = pdftext.page_count(_abspath(s, it.rec))
             conn.execute("update files set pages = ? where id = ?",
                          (it.rec.pages, it.rec.id))
-        except ToolError:
+        except (ToolError, OSError):
             it.rec.status = FileStatus.UNREADABLE
             _set_status(conn, it.rec.id, FileStatus.UNREADABLE)
         progress("pages", i, len(pdfs))
@@ -152,14 +152,14 @@ def run_scan_pipeline(
     for i, it in enumerate(live, 1):
         rec = it.rec
         if rec.status is not FileStatus.UNREADABLE:
-            it.ident = _best_identity(conn, rec.id)
+            it.ident = best_identity(conn, rec.id)
             it.subject = classify_subject(rec.relpath, it.ident, it.filename, s)
             it.kind = classify_kind(it.ident, rec.ext, rec.pages, s)
             below = it.ident is None or it.ident.confidence < s.confidence
             if below and it.kind is Kind.PLAN and it.subject is not None:
                 if it.ident is None:
                     it.ident = Identity(
-                        title=_clean_filename_title(it.filename),
+                        title=clean_filename_title(it.filename),
                         method="filename", confidence=0.8)
                     conn.execute(
                         "delete from identities where file_id = ? and method = 'filename'",
@@ -195,7 +195,8 @@ def run_scan_pipeline(
 
     # --- plan
     held = {r[0] for r in conn.execute(
-        "select file_id from review_items where resolved = 0 and file_id is not null")}
+        "select file_id from review_items where resolved = 0 and file_id is not null"
+        " and reason != 'collision'")}  # build_plan owns collision items
     held |= {r[0] for r in conn.execute(
         "select gm.file_id from group_members gm join review_items ri"
         " on ri.group_id = gm.group_id where ri.resolved = 0")}
@@ -215,7 +216,7 @@ def run_scan_pipeline(
         decisions.append(PlanInput(r["id"], r["source"], r["relpath"], r["ext"],
                                    None, None, None, True))  # type: ignore[arg-type]
     progress("plan", 0, len(decisions))
-    entries = build_plan(conn, decisions, s.sources)
+    build_plan(conn, decisions, s.sources)
     conn.executemany(
         "delete from plan_entries where file_id = ?",
         [(it.rec.id,) for it in live if it.rec.id not in planned_ids],
@@ -226,12 +227,12 @@ def run_scan_pipeline(
     progress("plan", len(decisions), len(decisions))
 
     # --- summary
-    live_entries = [e for e in entries if e.action != "quarantine"]
+    planned = [d for d in decisions if not d.quarantine]
     return PipelineSummary(
         status_counts=_counts(conn.execute(
             "select status, count(*) from files group by status")),
-        subject_counts=dict(Counter(e.subject for e in live_entries)),
-        kind_counts=dict(Counter(e.kind.value for e in live_entries if e.kind)),
+        subject_counts=dict(Counter(d.subject for d in planned)),
+        kind_counts=dict(Counter(d.kind.value for d in planned)),
         review_reasons=_counts(conn.execute(
             "select reason, count(*) from review_items where resolved = 0"
             " group by reason")),

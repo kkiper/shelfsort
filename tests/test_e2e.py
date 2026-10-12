@@ -65,6 +65,13 @@ def test_full_dry_run_then_apply_then_undo(conn, settings, lib):
     run_batch(conn, bid, lib.sources, settings)
     assert lib.exists("Woodworking/Magazines/Wood/Wood - 2002-04 (#95).pdf")
     assert lib.exists("Woodworking/Plans & Articles/Arch Top Bookends.pdf")
+    for rel in ("Woodworking/Router Table.epub", "Woodworking/Router Table.lit",
+                "Woodworking/a/Morris Chair.pdf", "Woodworking/b/Morris Chair.pdf",
+                "Woodworking/broken.pdf"):
+        assert lib.exists(rel), rel  # held files are untouched
+    quarantined = [p for p in snapshot(lib.root) if p.startswith("_quarantine/")]
+    assert any(p.endswith(("dovetail-sawing-guide.pdf", "saw cuts quick sheet.pdf"))
+               for p in quarantined)
     undo_batch(conn, bid, lib.sources)
     assert snapshot(lib.root, ignore={".shelfsort", "_quarantine"}) == before
 
@@ -78,3 +85,37 @@ def test_pipeline_is_idempotent(conn, settings, lib):
     assert conn.execute("select count(*) from review_items").fetchone()[0] == items
     assert list(dict.fromkeys(stages)) == [
         "scan", "dedupe", "pages", "identify", "classify", "groups", "plan"]
+
+
+def test_collision_is_planned_and_idempotent(conn, settings, lib):
+    from shelfsort.scan import scan_sources
+
+    target = lib.root / "Woodworking" / "Plans & Articles"
+    library.make_pdf(target / "Chair.pdf", ["already filed"])
+    library.make_pdf(lib.root / "Woodworking" / "Chair.pdf", ["new copy"])
+    scan_sources(conn, settings.sources)
+    conn.execute("update files set status = 'organized' "
+                 "where relpath = 'Woodworking/Plans & Articles/Chair.pdf'")
+    conn.commit()
+    first = run_scan_pipeline(conn, settings, lambda *a: None)
+    assert first.review_reasons["collision"] == 1
+    second = run_scan_pipeline(conn, settings, lambda *a: None)
+    assert second == first
+    row = conn.execute(
+        "select f.status, p.target_relpath from files f join plan_entries p "
+        "on p.file_id = f.id where f.relpath = 'Woodworking/Chair.pdf'").fetchone()
+    assert row["status"] == "planned"
+    assert row["target_relpath"] == "Woodworking/Plans & Articles/Chair (2).pdf"
+
+
+def test_vanished_file_is_unreadable_not_fatal(conn, settings, lib, monkeypatch):
+    real = pdftext.page_count
+
+    def flaky(path):
+        if path.endswith("arch-top-bookends.pdf") or path.endswith("<.pdf"):
+            raise FileNotFoundError(path)
+        return real(path)
+
+    monkeypatch.setattr(pdftext, "page_count", flaky)
+    summary = run_scan_pipeline(conn, settings, lambda *a: None)
+    assert summary.status_counts["unreadable"] == 2

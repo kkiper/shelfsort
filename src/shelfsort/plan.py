@@ -24,7 +24,7 @@ class PlanInput:
     quarantine: bool
 
 
-def _clean_filename_title(filename: str) -> str:
+def clean_filename_title(filename: str) -> str:
     stem = posixpath.splitext(filename)[0]
     single_case = stem.lower() == stem or stem.upper() == stem
     text = " ".join(stem.replace("_", " ").replace("-", " ").split())
@@ -39,7 +39,7 @@ def target_relpath(
     parts = [sanitize_component(subject), sanitize_component(kind.value)]
     if kind is Kind.BOOK:
         author = ident.authors[0] if ident.authors else "Unknown Author"
-        title = ident.title or _clean_filename_title(filename)
+        title = ident.title or clean_filename_title(filename)
         stem = title + (f" ({ident.year})" if ident.year else "")
         parts.append(sanitize_component(author))
     elif kind is Kind.MAGAZINE:
@@ -49,7 +49,7 @@ def target_relpath(
             stem += f" (#{ident.issue_number})"
         parts.append(sanitize_component(mag))
     else:
-        stem = ident.title or _clean_filename_title(filename)
+        stem = ident.title or clean_filename_title(filename)
     parts.append(sanitize_component(f"{stem}.{ext}" if ext else stem))
     return "/".join(parts)
 
