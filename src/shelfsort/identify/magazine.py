@@ -111,19 +111,19 @@ def parse_issue_number(text: str) -> int | None:
 
 def cover_story(words: list[OcrWord], masthead: str) -> str | None:
     lines: list[list[OcrWord]] = []
-    start_top = 0
-    for w in sorted(words, key=lambda w: w.top):
-        if lines and w.top - start_top <= _LINE_TOLERANCE:
+    line_top = 0
+    for w in words:
+        if lines and abs(w.top - line_top) <= max(_LINE_TOLERANCE, 0.5 * w.height):
             lines[-1].append(w)
         else:
             lines.append([w])
-            start_top = w.top
+            line_top = w.top
     mast = normalize_title(masthead)
     best: tuple[float, str] | None = None
     for line in lines:
         text = " ".join(w.text for w in line)
-        norm = normalize_title(text)
-        if mast and norm and fuzz.partial_ratio(mast, norm) >= _MASTHEAD_THRESHOLD:
+        norm = _prepare(text)
+        if mast and norm and fuzz.ratio(mast, norm) >= _MASTHEAD_THRESHOLD:
             continue
         if (
             parse_issue_date(text)
