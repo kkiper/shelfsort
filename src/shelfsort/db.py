@@ -14,11 +14,13 @@ create table if not exists files (
     unique (source, relpath)
 );
 create table if not exists identities (
-    file_id integer primary key references files(id),
+    id integer primary key,
+    file_id integer not null references files(id),
     method text not null,
     json text not null,
     confidence real not null
 );
+create index if not exists identities_file on identities(file_id);
 create table if not exists groups (
     id integer primary key,
     type text not null,
