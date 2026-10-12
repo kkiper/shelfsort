@@ -82,11 +82,12 @@ def test_pdftext_corrupt_raises_toolerror(tmp_path):
         pdftext.render_page_png(str(p), 0)
 
 
-def test_pdftext_render_out_of_range(tmp_path):
+@pytest.mark.parametrize("page", [-1, 1, 5])
+def test_pdftext_render_out_of_range(tmp_path, page):
     p = tmp_path / "g.pdf"
-    _make_pdf(p, 1)
+    _make_pdf(p, 1)  # valid pages: only 0
     with pytest.raises(ToolError):
-        pdftext.render_page_png(str(p), 5)
+        pdftext.render_page_png(str(p), page)
 
 
 @pytest.mark.tools
