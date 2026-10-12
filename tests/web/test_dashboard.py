@@ -1,6 +1,7 @@
 import json
 
 import httpx
+import pytest
 
 from shelfsort import db
 from shelfsort import settings as settings_mod
@@ -123,3 +124,47 @@ def test_no_route_runs_sync_work_on_the_event_loop():
                  for r in m.router.routes]
     assert endpoints
     assert [e.__name__ for e in endpoints if inspect.iscoroutinefunction(e)] == []
+
+
+def test_ollama_check_never_500s(client_factory, monkeypatch):
+    client = client_factory()
+    c = db.connect(client.db_path)
+    s = settings_mod.load(c)
+    s.ollama_enabled, s.ollama_url = True, "http://o:11434"
+    settings_mod.save(c, s)
+    c.close()
+
+    def fail(url, timeout):
+        raise httpx.InvalidURL("bad")
+
+    monkeypatch.setattr("shelfsort.web.routes_dashboard.httpx.get", fail)
+    r = client.get("/")
+    assert r.status_code == 200 and "Ollama unreachable" in r.text
+
+
+# ------------------------------------------------------------- I5: CSRF
+
+@pytest.mark.parametrize("headers", [
+    {"Origin": "http://evil.example"},
+    {"Origin": "http://testserver:9999"},
+    {"Origin": "null"},
+    {"Referer": "http://evil.example/history"},
+])
+def test_cross_site_post_is_403(client, headers):
+    r = client.post("/quarantine/empty", data={"source": "x", "confirm": "no"}, headers=headers)
+    assert r.status_code == 403
+
+
+@pytest.mark.parametrize("headers", [
+    {},
+    {"Origin": "http://testserver"},
+    {"Origin": "http://TESTSERVER:80"},
+    {"Referer": "http://testserver/history"},
+])
+def test_same_origin_post_passes(client, headers):
+    r = client.post("/quarantine/empty", data={"source": "x", "confirm": "no"}, headers=headers)
+    assert r.status_code == 400  # reached the handler (bad confirmation)
+
+
+def test_cross_site_get_is_not_blocked(client):
+    assert client.get("/settings", headers={"Origin": "http://evil.example"}).status_code == 200

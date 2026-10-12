@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from fastapi import APIRouter, Depends, Request
 from starlette.datastructures import FormData
 from fastapi.responses import HTMLResponse
@@ -41,6 +43,24 @@ def _number(form, name: str, current, cast, lo, hi):
     return value
 
 
+def _ollama_url(raw: str, enabled: bool) -> str:
+    url = raw.strip()
+    if not url:
+        if enabled:
+            raise ValueError("ollama_url: required when Ollama is enabled")
+        return url
+    try:
+        parts = urlsplit(url)
+        parts.port  # raises ValueError for a bad port
+    except ValueError:
+        raise ValueError(f"ollama_url: {url!r} is not a valid URL") from None
+    if (parts.scheme not in ("http", "https") or not parts.hostname
+            or any(ch.isspace() for ch in url)):
+        raise ValueError(
+            f"ollama_url: {url!r} must look like http://host:11434 (http or https and a host)")
+    return url
+
+
 def parse_form(form, current: Settings) -> Settings:
     """Build new Settings from submitted form data; raises ValueError on bad input."""
     s = Settings(**vars(current))
@@ -61,7 +81,7 @@ def parse_form(form, current: Settings) -> Settings:
     s.fuzzy_threshold = _number(form, "fuzzy_threshold", s.fuzzy_threshold, int, 0, 100)
     s.sidecar_all = "sidecar_all" in form
     s.ollama_enabled = "ollama_enabled" in form
-    s.ollama_url = (form.get("ollama_url") or "").strip()
+    s.ollama_url = _ollama_url(form.get("ollama_url") or "", s.ollama_enabled)
     s.ollama_model = (form.get("ollama_model") or "").strip() or current.ollama_model
     return s
 

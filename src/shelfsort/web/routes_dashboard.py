@@ -26,7 +26,7 @@ def _last_summary(conn) -> dict | None:
 def _ollama_reachable(s) -> bool:
     try:
         httpx.get(f"{s.ollama_url.rstrip('/')}/api/tags", timeout=2).raise_for_status()
-    except (httpx.HTTPError, ValueError):
+    except Exception:  # bad URL, refused, timeout, non-2xx...: never a 500
         return False
     return True
 

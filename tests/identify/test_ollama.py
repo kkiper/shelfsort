@@ -56,3 +56,24 @@ def test_ollama_timeout_raises(httpx_mock):
     httpx_mock.add_exception(httpx.ReadTimeout("slow"))
     with pytest.raises(ollama.OllamaUnavailable):
         ollama.resolve(b"png", "http://o", "llava")
+
+
+@pytest.mark.parametrize("exc", [
+    httpx.InvalidURL("bad url"),
+    httpx.DecodingError("bad gzip"),
+    httpx.TooManyRedirects("loop"),
+    httpx.ConnectError("refused"),
+    httpx.StreamConsumed(),
+])
+def test_any_httpx_error_is_unavailable(monkeypatch, exc):
+    def boom(*a, **k):
+        raise exc
+
+    monkeypatch.setattr(ollama.httpx, "post", boom)
+    with pytest.raises(ollama.OllamaUnavailable):
+        ollama.resolve(b"png", "http://o:11434", "llava")
+
+
+def test_unparsable_url_is_unavailable():
+    with pytest.raises(ollama.OllamaUnavailable):
+        ollama.resolve(b"png", "http://exa mple:99999", "llava")

@@ -20,7 +20,14 @@ PROMPT = (
 
 
 class OllamaUnavailable(Exception):
-    """Ollama could not be reached (connection error or timeout)."""
+    """Ollama could not be used: unreachable, bad URL, or any other httpx error."""
+
+
+# Every exception class httpx exports (HTTPError, InvalidURL, StreamError,
+# CookieConflict and their subclasses): none of them may abort a scan.
+_HTTPX_ERRORS = tuple(
+    obj for name in httpx.__all__
+    if isinstance(obj := getattr(httpx, name), type) and issubclass(obj, Exception))
 
 
 def resolve(png: bytes, url: str, model: str, timeout: float = 120) -> Identity | None:
@@ -33,8 +40,8 @@ def resolve(png: bytes, url: str, model: str, timeout: float = 120) -> Identity 
     }
     try:
         resp = httpx.post(url.rstrip("/") + "/api/generate", json=payload, timeout=timeout)
-    except httpx.TransportError as e:
-        raise OllamaUnavailable(str(e)) from e
+    except _HTTPX_ERRORS as e:
+        raise OllamaUnavailable(str(e) or type(e).__name__) from e
     if resp.status_code != 200:
         return None
     try:

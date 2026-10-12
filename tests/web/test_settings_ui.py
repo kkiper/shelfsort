@@ -62,3 +62,19 @@ def test_settings_out_of_range_is_400(client):
 def test_static_helper_served(client):
     r = client.get("/static/app.js")
     assert r.status_code == 200 and "data-poll" in r.text
+
+
+import pytest
+
+
+@pytest.mark.parametrize("url", ["ftp://o:11434", "o:11434", "http://", "not a url", "http://exa mple"])
+def test_bad_ollama_url_is_400(client, url):
+    r = client.post("/settings", data={"ollama_url": url})
+    assert r.status_code == 400 and "ollama_url" in r.text
+    assert _saved(client).ollama_url == ""
+
+
+def test_ollama_enabled_needs_url(client):
+    r = client.post("/settings", data={"ollama_enabled": "on", "ollama_url": ""})
+    assert r.status_code == 400
+    assert client.post("/settings", data={"ollama_url": "https://o.lan:11434"}).status_code == 200
