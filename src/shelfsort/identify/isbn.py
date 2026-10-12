@@ -6,7 +6,7 @@ import isbnlib
 
 # A run of digit groups (last char of a group may be X) joined by single
 # hyphens or spaces, bounded by non-digits on both sides.
-_RUN_RE = re.compile(r"(?<!\d)\d+[Xx]?(?:[- ]\d+[Xx]?)*(?!\d)")
+_RUN_RE = re.compile(r"(?<!\d)\d[\dXx]*(?:[- ][\dXx]+)*(?!\d)")
 _GROUP_SEP_RE = re.compile(r"[- ]")
 
 
