@@ -102,3 +102,22 @@ def test_rolls_back_on_error(conn, add_file, tmp_source):
         build_plan(conn, [pi(f, "Q2"), pi(9999, "Nope")], tmp_source.sources)
     rows = conn.execute("select file_id, target_relpath from plan_entries").fetchall()
     assert [tuple(r) for r in rows] == [(f, "Woodworking/Plans & Articles/Q.pdf")]
+
+
+def test_already_at_suffixed_name_is_in_place(conn, add_file, tmp_source):
+    d = "Woodworking/Plans & Articles"
+    tmp_source.write(f"{d}/Foo.pdf")
+    tmp_source.write(f"{d}/Foo (2).pdf")
+    f = add_file("remote", f"{d}/Foo (2).pdf")
+    entries = build_plan(conn, [pi(f, "Foo", relpath=f"{d}/Foo (2).pdf")], tmp_source.sources)
+    assert entries == []
+    assert conn.execute("select count(*) from plan_entries").fetchone()[0] == 0
+    assert conn.execute("select count(*) from review_items").fetchone()[0] == 0
+
+
+def test_unknown_source_raises(conn, add_file, tmp_source):
+    import pytest
+
+    f = add_file("nowhere", "Woodworking/Z.pdf")
+    with pytest.raises(KeyError):
+        build_plan(conn, [pi(f, "Z", source="nowhere")], tmp_source.sources)

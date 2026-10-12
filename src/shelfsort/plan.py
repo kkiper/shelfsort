@@ -74,6 +74,8 @@ def build_plan(
 ) -> list[PlanEntry]:
     candidates: list[tuple[PlanInput, str]] = []
     for d in decisions:
+        if d.source not in sources:
+            raise KeyError(f"unknown source: {d.source!r}")
         if d.quarantine:
             target = f"{_QUARANTINE}/{d.relpath}"
         else:
@@ -91,9 +93,7 @@ def build_plan(
     listings: dict[tuple[str, str], set[str]] = {}
 
     def on_disk(source: str, relpath: str) -> bool:
-        root = sources.get(source)
-        if root is None:
-            return False
+        root = sources[source]
         folder = _split(relpath)[0]
         key = (source, folder)
         if key not in listings:
@@ -128,6 +128,8 @@ def build_plan(
             n += 1
             final = _suffixed(target, n)
         taken.add(final.casefold())
+        if final == d.relpath:  # already sits at its suffixed name
+            continue
         if d.quarantine:
             action = "quarantine"
         else:
