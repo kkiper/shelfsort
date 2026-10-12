@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shelfsort"
+version = "0.1.0"
+description = "Organize an ebook collection"
+requires-python = ">=3.12"
+dependencies = [
+    "pymupdf",
+    "isbnlib",
+    "rapidfuzz",
+    "pytesseract",
+    "pillow",
+    "httpx",
+    "fastapi",
+    "jinja2",
+    "uvicorn",
+    "python-multipart",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-httpx"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["tools: needs Calibre/Tesseract/Ollama; run in container"]
