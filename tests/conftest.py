@@ -82,3 +82,26 @@ def patch_resolvers(monkeypatch):
         return calls
 
     return install
+
+
+@pytest.fixture
+def tmp_source(tmp_path):
+    """A temp source root registered under the name "remote"."""
+
+    class TmpSource:
+        name = "remote"
+        root = tmp_path / "remote_root"
+
+        def write(self, relpath, data=b"x"):
+            p = self.root / relpath
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(data)
+            return p
+
+        @property
+        def sources(self):
+            return {self.name: str(self.root)}
+
+    src = TmpSource()
+    src.root.mkdir()
+    return src
