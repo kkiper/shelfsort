@@ -16,6 +16,7 @@ from shelfsort.pdftext import render_page_png
 
 _MATCH_THRESHOLD = 85
 _MASTHEAD_THRESHOLD = 80
+_MASTHEAD_PREFIX_THRESHOLD = 85
 _MIN_CONF = 40
 _LINE_TOLERANCE = 10
 _NO_DATE_FACTOR = 0.7
@@ -123,7 +124,11 @@ def cover_story(words: list[OcrWord], masthead: str) -> str | None:
     for line in lines:
         text = " ".join(w.text for w in line)
         norm = _prepare(text)
-        if mast and norm and fuzz.ratio(mast, norm) >= _MASTHEAD_THRESHOLD:
+        if mast and norm and (
+            fuzz.ratio(mast, norm) >= _MASTHEAD_THRESHOLD
+            or fuzz.ratio(mast, " ".join(norm.split()[: len(mast.split())]))
+            >= _MASTHEAD_PREFIX_THRESHOLD
+        ):
             continue
         if (
             parse_issue_date(text)

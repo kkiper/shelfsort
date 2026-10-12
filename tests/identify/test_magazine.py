@@ -75,6 +75,12 @@ def test_cover_story_masthead_filter_is_whole_line():
     assert cover_story([OcrWord("WOOD", 90, 5), OcrWord("Jigs", 30, 200)], "Wood") == "Jigs"
 
 
+def test_cover_story_drops_masthead_sharing_line_with_tagline():
+    words = [OcrWord(t, 120, 10) for t in ("AMERICAN", "WOODWORKER", "BUILD", "IT", "BETTER")]
+    words += [OcrWord("Morris", 60, 300), OcrWord("Chair", 60, 300)]
+    assert cover_story(words, "American Woodworker") == "Morris Chair"
+
+
 def test_cover_story_none_when_too_short():
     assert cover_story([OcrWord("Ab", 80, 100)], "Wood") is None
 
