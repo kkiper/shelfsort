@@ -164,3 +164,57 @@ def insert_journal(conn):
 def journal_state(conn):
     return lambda jid: conn.execute(
         "select state from journal where id=?", (jid,)).fetchone()["state"]
+
+
+@pytest.fixture
+def client_factory(tmp_path):
+    """Build a TestClient around a fresh app: client_factory(sources=..., sources_root=...)."""
+    from fastapi.testclient import TestClient
+
+    from shelfsort import settings as settings_mod
+    from shelfsort.web.app import create_app
+
+    made = []
+
+    def _make(sources=None, sources_root=None):
+        db_path = str(tmp_path / f"web{len(made)}.db")
+        root = sources_root if sources_root is not None else tmp_path / "no_sources_root"
+        if sources is not None:
+            c = db.connect(db_path)
+            s = settings_mod.load(c)
+            s.sources = dict(sources)
+            settings_mod.save(c, s)
+            c.close()
+        client = TestClient(create_app(db_path, str(root)))
+        client.db_path = db_path
+        made.append(client)
+        return client
+
+    yield _make
+    for c in made:
+        c.app.state.worker.join(10)
+
+
+@pytest.fixture
+def client(client_factory):
+    return client_factory()
+
+
+@pytest.fixture
+def slow_job(monkeypatch):
+    """Make the scan job block until released (released automatically on teardown)."""
+    import threading
+
+    from shelfsort.pipeline import PipelineSummary
+    from shelfsort.web import routes_dashboard
+
+    release = threading.Event()
+
+    def blocked(conn, s, progress):
+        progress("scan", 1, 2)
+        release.wait(10)
+        return PipelineSummary()
+
+    monkeypatch.setattr(routes_dashboard, "run_scan_pipeline", blocked)
+    yield release
+    release.set()

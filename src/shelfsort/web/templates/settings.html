@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Settings</h1>
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+<form method="post" action="/settings">
+<label for="sources">Sources (name = /path, one per line; blank = auto-discover)</label>
+<textarea id="sources" name="sources" rows="3">{{ v.sources }}</textarea>
+<label for="magazines">Magazines (one per line)</label>
+<textarea id="magazines" name="magazines" rows="5">{{ v.magazines }}</textarea>
+<label for="vague_folders">Vague folders (one per line)</label>
+<textarea id="vague_folders" name="vague_folders" rows="4">{{ v.vague_folders }}</textarea>
+<label for="subject_map">Subject map (key = value)</label>
+<textarea id="subject_map" name="subject_map" rows="4">{{ v.subject_map }}</textarea>
+<label for="keyword_rules">Keyword rules (Subject = kw1, kw2)</label>
+<textarea id="keyword_rules" name="keyword_rules" rows="4">{{ v.keyword_rules }}</textarea>
+<label for="confidence">Confidence threshold (0 to 1)</label>
+<input type="text" id="confidence" name="confidence" value="{{ v.confidence }}">
+<label for="plan_page_limit">Plans &amp; Articles page limit</label>
+<input type="text" id="plan_page_limit" name="plan_page_limit" value="{{ v.plan_page_limit }}">
+<label for="fuzzy_threshold">Fuzzy match threshold (0 to 100)</label>
+<input type="text" id="fuzzy_threshold" name="fuzzy_threshold" value="{{ v.fuzzy_threshold }}">
+<label><input type="checkbox" name="sidecar_all" {% if v.sidecar_all %}checked{% endif %}> Write OPF sidecar for all files</label>
+<label><input type="checkbox" name="ollama_enabled" {% if v.ollama_enabled %}checked{% endif %}> Enable Ollama resolver</label>
+<label for="ollama_url">Ollama URL</label>
+<input type="text" id="ollama_url" name="ollama_url" value="{{ v.ollama_url }}">
+<label for="ollama_model">Ollama model</label>
+<input type="text" id="ollama_model" name="ollama_model" value="{{ v.ollama_model }}">
+<p><button type="submit">Save</button></p>
+</form>
+{% endblock %}

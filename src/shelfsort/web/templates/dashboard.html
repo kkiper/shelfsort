@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Dashboard</h1>
+{% for w in warnings %}<div class="warn">{{ w }}</div>{% endfor %}
+
+<h2>Sources</h2>
+<table>
+<tr><th>Name</th><th>Path</th><th>State</th></tr>
+{% for src in sources %}
+<tr><td>{{ src.name }}</td><td>{{ src.path }}</td>
+<td>{% if not src.status.mounted %}not mounted{% elif src.status.writable %}mounted, writable{% else %}mounted, read-only{% endif %}
+ <small>({{ src.status.detail }})</small></td></tr>
+{% else %}
+<tr><td colspan="3">No sources found.</td></tr>
+{% endfor %}
+</table>
+
+<h2>Scan</h2>
+<form method="post" action="/scan" data-ajax><button type="submit">Scan now</button></form>
+<div id="job" data-poll="/job">{% include "job.html" %}</div>
+
+<h2>Last scan</h2>
+{% if summary %}
+{% for title, counts in [("Status", summary.status_counts), ("Kind", summary.kind_counts),
+                         ("Subject", summary.subject_counts), ("Review reasons", summary.review_reasons)] %}
+<p><strong>{{ title }}:</strong>
+{% for k, n in counts.items() %}{{ k }} {{ n }}{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}</p>
+{% endfor %}
+{% else %}
+<p>No scan has completed yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shelfsort</title>
+<style>
+body { font: 15px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 52rem; padding: 1rem; color: #222; }
+nav a { margin-right: 1rem; }
+table { border-collapse: collapse; width: 100%; }
+td, th { border-bottom: 1px solid #ddd; padding: .3rem .5rem; text-align: left; }
+.warn { background: #fff3cd; padding: .4rem .8rem; margin: .4rem 0; }
+.error { background: #f8d7da; padding: .4rem .8rem; margin: .4rem 0; }
+textarea, input[type=text] { width: 100%; box-sizing: border-box; font: inherit; }
+label { display: block; margin-top: .8rem; font-weight: 600; }
+</style>
+</head>
+<body>
+<nav><strong>shelfsort</strong> &nbsp; <a href="/">Dashboard</a><a href="/settings">Settings</a></nav>
+{% block content %}{% endblock %}
+<script src="/static/app.js"></script>
+</body>
+</html>

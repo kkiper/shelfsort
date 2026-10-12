@@ -1,0 +1,9 @@
+{% if job.running %}
+<p>Running {{ job.name }}: {{ job.stage }} {{ job.done }}{% if job.total %} / {{ job.total }}{% endif %}</p>
+{% elif job.error %}
+<p class="error">Job {{ job.name }} failed: {{ job.error }}</p>
+{% elif job.name %}
+<p>Last job ({{ job.name }}) finished.</p>
+{% else %}
+<p>No job has run since startup.</p>
+{% endif %}
