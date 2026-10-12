@@ -6,13 +6,17 @@ from shelfsort.settings import Settings
 DEFAULT_VAGUE_FOLDERS = Settings().vague_folders
 
 
-def _rank(row, local_source: str, vague: set[str]) -> tuple:
+# Rows that must never be ranked: not on disk, or not a candidate at all.
+_UNRANKED = ("ignored", "missing", "quarantined")
+
+
+def _rank(row, preferred_source: str, vague: set[str]) -> tuple:
     relpath = row["relpath"].replace("\\", "/")
     parts = relpath.split("/")
     top = parts[0].lower() if len(parts) > 1 else ""
     stem = PurePosixPath(relpath).stem
     return (
-        row["source"] != local_source,
+        row["source"] != preferred_source,
         not any(ch.isalpha() for ch in stem),
         top in vague,
         len(relpath),
@@ -22,7 +26,7 @@ def _rank(row, local_source: str, vague: set[str]) -> tuple:
 
 def find_exact_duplicates(
     conn: sqlite3.Connection,
-    local_source: str = "local",
+    preferred_source: str = "local",
     vague_folders: list[str] = DEFAULT_VAGUE_FOLDERS,
 ) -> list[tuple[int, list[int]]]:
     vague = {v.lower() for v in vague_folders}
@@ -32,7 +36,8 @@ def find_exact_duplicates(
     conn.execute("delete from groups where type='exact'")
     rows = conn.execute(
         "select id, source, relpath, sha256 from files "
-        "where sha256 is not null and status != 'ignored' order by id").fetchall()
+        "where sha256 is not null and status not in (?, ?, ?) order by id",
+        _UNRANKED).fetchall()
     by_sha: dict[str, list] = {}
     for row in rows:
         by_sha.setdefault(row["sha256"], []).append(row)
@@ -40,7 +45,7 @@ def find_exact_duplicates(
     for sha, members in by_sha.items():
         if len(members) < 2:
             continue
-        members.sort(key=lambda r: _rank(r, local_source, vague))
+        members.sort(key=lambda r: _rank(r, preferred_source, vague))
         keeper = members[0]["id"]
         dups = sorted(m["id"] for m in members[1:])
         gid = conn.execute(

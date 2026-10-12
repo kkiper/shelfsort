@@ -15,6 +15,7 @@ class Settings:
     isbn_last_pages: int = 5
     sidecar_all: bool = True
     sources: dict[str, str] = field(default_factory=dict)  # name -> container path
+    preferred_source: str = "local"  # exact-duplicate keeper rule 1
     subject_map: dict[str, str] = field(default_factory=dict)
     vague_folders: list[str] = field(default_factory=lambda: [
         "downloads", "misc", "new folder", "unsorted", "temp", "inbox"])

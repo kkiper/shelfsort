@@ -30,6 +30,7 @@ _SKIP = (
     FileStatus.IGNORED.value,
     FileStatus.ORGANIZED.value,
     FileStatus.QUARANTINED.value,
+    FileStatus.MISSING.value,
 )
 _IDENTIFY = (FileStatus.NEW.value, FileStatus.RETRY.value, FileStatus.REVIEW.value)
 _FILE_REASONS = ("unreadable", "magazine", "unidentified", "subject", "kind")
@@ -99,7 +100,8 @@ def _load(
 ) -> tuple[list[_Item], list[sqlite3.Row]]:
     """Live items (to identify/classify/plan) and exact-duplicate rows."""
     dups: set[int] = set()
-    for _keeper, members in find_exact_duplicates(conn, vague_folders=s.vague_folders):
+    for _keeper, members in find_exact_duplicates(
+            conn, preferred_source=s.preferred_source, vague_folders=s.vague_folders):
         dups.update(members)
     marks = ",".join("?" * len(_SKIP))
     rows = conn.execute(
@@ -277,6 +279,9 @@ def _plan_stages(
                                    None, None, None, True))  # type: ignore[arg-type]
     progress("plan", 0, len(decisions))
     build_plan(conn, decisions, s.sources)
+    conn.execute(  # a file that is gone has nothing to apply
+        "delete from plan_entries where file_id in"
+        " (select id from files where status = 'missing')")
     conn.executemany(
         "delete from plan_entries where file_id = ?",
         [(it.rec.id,) for it in live if it.rec.id not in planned_ids],

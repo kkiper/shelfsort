@@ -93,7 +93,7 @@ def test_updated_ignored_file_stays_ignored(src, conn):
     assert r.updated == 1 and row["status"] == "ignored" and row["sha256"] is None
 
 
-def test_missing_kept_and_reappearing_is_unchanged(src, conn):
+def test_missing_marked_and_reappearing_is_new(src, conn):
     f = src / "a.pdf"
     f.write_bytes(b"x")
     scan_sources(conn, {"r": str(src)})
@@ -104,11 +104,29 @@ def test_missing_kept_and_reappearing_is_unchanged(src, conn):
     f.unlink()
     r = scan_sources(conn, {"r": str(src)})
     assert r.missing == 1 and r.unchanged == 0
-    assert rows_by_path(conn)["a.pdf"]["status"] == "planned"
+    assert rows_by_path(conn)["a.pdf"]["status"] == "missing"
     f.write_bytes(data)
     os.utime(f, (st.st_atime, st.st_mtime))
     r = scan_sources(conn, {"r": str(src)})
     assert r.unchanged == 1 and r.missing == 0 and r.updated == 0
+    assert rows_by_path(conn)["a.pdf"]["status"] == "new"  # pipeline re-evaluates it
+
+
+def test_missing_ignored_reappears_ignored_and_quarantined_untouched(src, conn):
+    (src / "notes.txt").write_bytes(b"t")
+    scan_sources(conn, {"r": str(src)})
+    conn.execute(
+        "insert into files(source, relpath, size, mtime, sha256, ext, status)"
+        " values ('r', '_quarantine/q.pdf', 1, 0, 'h', 'pdf', 'quarantined')")
+    conn.commit()
+    (src / "notes.txt").unlink()
+    scan_sources(conn, {"r": str(src)})
+    rows = rows_by_path(conn)
+    assert rows["notes.txt"]["status"] == "missing"
+    assert rows["_quarantine/q.pdf"]["status"] == "quarantined"
+    (src / "notes.txt").write_bytes(b"t2")
+    scan_sources(conn, {"r": str(src)})
+    assert rows_by_path(conn)["notes.txt"]["status"] == "ignored"
 
 
 def test_sources_are_independent_and_progress(src, tmp_path, conn):

@@ -33,3 +33,20 @@ def test_rerun_replaces_groups_and_records_decisions(conn, add_file):
         "select file_id, decision from group_members order by file_id").fetchall()
     assert [(r[0], r[1]) for r in rows] == [(a, "keep"), (b, "quarantine")]
     assert conn.execute("select key from groups").fetchone()[0] == "h4"
+
+
+def test_missing_quarantined_ignored_rows_never_rank(conn, add_file):
+    stale = add_file("remote", "Wood/Book.pdf", sha="h6", status="missing")
+    gone = add_file("local", "Book.pdf", sha="h6", status="quarantined")
+    real = add_file("remote", "Woodworking/Book.pdf", sha="h6")
+    assert find_exact_duplicates(conn) == []
+    other = add_file("remote", "Woodworking/Copy/Book.pdf", sha="h6")
+    assert find_exact_duplicates(conn) == [(real, [other])]
+    assert stale and gone
+
+
+def test_preferred_source_is_configurable(conn, add_file):
+    a = add_file("nas", "x/011167038.pdf", sha="h7")
+    b = add_file("local", "Woodworking/Router Table.pdf", sha="h7")
+    assert find_exact_duplicates(conn, preferred_source="nas") == [(a, [b])]
+    assert find_exact_duplicates(conn) == [(b, [a])]

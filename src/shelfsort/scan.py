@@ -89,12 +89,15 @@ def scan_sources(
                 )
                 added += 1
             elif unchanged_file:
+                if row["status"] == FileStatus.MISSING.value:
+                    # Reappeared: re-evaluate it from scratch.
+                    conn.execute(
+                        "update files set status = ? where id = ?",
+                        ((FileStatus.NEW if handled else FileStatus.IGNORED).value,
+                         row["id"]))
                 unchanged += 1
             else:
-                status = (
-                    FileStatus.IGNORED if row["status"] == FileStatus.IGNORED.value
-                    else FileStatus.NEW
-                ).value
+                status = (FileStatus.NEW if handled else FileStatus.IGNORED).value
                 conn.execute(
                     "update files set size = ?, mtime = ?, sha256 = ?, ext = ?,"
                     " pages = null, status = ? where id = ?",
@@ -103,6 +106,13 @@ def scan_sources(
                 updated += 1
             if progress:
                 progress(seen_count)
-        missing += sum(1 for rel in existing if rel not in seen)
+        gone = [row for rel, row in existing.items() if rel not in seen]
+        missing += len(gone)
+        # Quarantined rows live under the skipped _quarantine folder.
+        conn.executemany(
+            "update files set status = ? where id = ?",
+            [(FileStatus.MISSING.value, row["id"]) for row in gone
+             if row["status"] not in (FileStatus.QUARANTINED.value,
+                                      FileStatus.MISSING.value)])
     conn.commit()
     return ScanResult(added, updated, unchanged, missing)

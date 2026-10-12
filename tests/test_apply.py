@@ -532,3 +532,43 @@ def test_resume_does_not_reprocess_review_file(fixture_source, conn, settings):
     r = run_batch(conn, bid, fixture_source.sources, settings)
     assert (r.done, r.skipped) == (0, 0)
     assert count(conn, "select count(*) from review_items where reason='source_changed'") == 1
+
+
+# ------------------------------------------------- C1: exact-dup keeper check
+
+def exact_dup_batch(conn, src):
+    from shelfsort.dedupe import find_exact_duplicates
+
+    src.write("Woodworking/Book.pdf", b"same")
+    src.write("Downloads/Book.pdf", b"same")
+    scan_sources(conn, src.sources)
+    [(keeper, [dup])] = find_exact_duplicates(conn)
+    conn.execute(
+        "insert into plan_entries(file_id, action, target_relpath, write_meta) "
+        "values (?, 'quarantine', '_quarantine/Downloads/Book.pdf', 0)", (dup,))
+    conn.commit()
+    return keeper, dup, create_batch(conn, {"source": "remote"})
+
+
+def test_quarantine_skipped_when_keeper_missing(fixture_source, conn, settings):
+    keeper, dup, bid = exact_dup_batch(conn, fixture_source)
+    os.remove(fixture_source.path("Woodworking/Book.pdf"))
+    r = run_batch(conn, bid, fixture_source.sources, settings)
+    assert (r.done, r.skipped) == (0, 1)
+    assert fixture_source.read("Downloads/Book.pdf") == b"same"
+    assert not fixture_source.exists("_quarantine/Downloads/Book.pdf")
+    assert conn.execute("select status from files where id=?", (dup,)).fetchone()[0] == "review"
+    assert count(conn, "select count(*) from review_items where reason='keeper_missing'") == 1
+
+
+def test_quarantine_skipped_when_keeper_size_differs(fixture_source, conn, settings):
+    keeper, dup, bid = exact_dup_batch(conn, fixture_source)
+    fixture_source.write("Woodworking/Book.pdf", b"edited since the scan")
+    r = run_batch(conn, bid, fixture_source.sources, settings)
+    assert r.skipped == 1 and fixture_source.exists("Downloads/Book.pdf")
+
+
+def test_quarantine_proceeds_when_keeper_present(fixture_source, conn, settings):
+    keeper, dup, bid = exact_dup_batch(conn, fixture_source)
+    r = run_batch(conn, bid, fixture_source.sources, settings)
+    assert r.done == 1 and fixture_source.exists("_quarantine/Downloads/Book.pdf")

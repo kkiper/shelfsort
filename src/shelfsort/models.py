@@ -20,6 +20,7 @@ class FileStatus(str, Enum):
     QUARANTINED = "quarantined"
     UNREADABLE = "unreadable"
     RETRY = "retry"
+    MISSING = "missing"  # not seen by the last scan of its (mounted) source
 
 
 @dataclass

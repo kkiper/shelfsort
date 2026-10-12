@@ -84,7 +84,7 @@ def _usable(root: str | None) -> bool:
 
 
 def create_batch(conn: sqlite3.Connection, scope: dict) -> int:
-    where = ["f.status not in ('organized', 'quarantined', 'review')"]
+    where = ["f.status not in ('organized', 'quarantined', 'review', 'missing')"]
     args: list = []
     if scope.get("source"):
         where.append("f.source = ?")
@@ -237,6 +237,12 @@ def run_batch(conn, batch_id: int, sources: dict[str, str], settings) -> BatchRe
                     _review(conn, "source_changed", f["id"])
             skipped += 1
             continue
+        if f["action"] == "quarantine" and not _keeper_present(conn, f, sources):
+            with conn:
+                conn.execute("update files set status = 'review' where id = ?", (f["id"],))
+                _review(conn, "keeper_missing", f["id"])
+            skipped += 1
+            continue
         if _apply_entry(conn, batch_id, f["source"], root, f, settings.sidecar_all):
             done += 1
         else:
@@ -244,6 +250,30 @@ def run_batch(conn, batch_id: int, sources: dict[str, str], settings) -> BatchRe
     with conn:
         conn.execute("update batches set state = 'done' where id = ?", (batch_id,))
     return BatchResult(done, skipped, "done")
+
+
+def _keeper_present(conn, f, sources: dict[str, str]) -> bool:
+    """For an exact duplicate, is its group's keeper (same sha) on disk at full size?
+
+    Quarantine entries that are not exact duplicates (review decisions) pass.
+    """
+    keepers = conn.execute(
+        "select k.* from group_members d "
+        "join groups g on g.id = d.group_id and g.type = 'exact' "
+        "join group_members km on km.group_id = g.id and km.decision = 'keep' "
+        "join files k on k.id = km.file_id "
+        "where d.file_id = ? and d.decision = 'quarantine'", (f["id"],)).fetchall()
+    for k in keepers:
+        root = sources.get(k["source"])
+        if (k["sha256"] != f["sha256"] or k["status"] in ("missing", "quarantined")
+                or not _usable(root)):
+            return False
+        try:
+            if os.stat(_full(root, k["relpath"])).st_size != k["size"]:
+                return False
+        except OSError:
+            return False
+    return True
 
 
 def _apply_entry(conn, batch_id, source, root, f, sidecar_all) -> bool:
