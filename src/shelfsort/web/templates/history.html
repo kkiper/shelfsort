@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>History</h1>
+{% if message %}<div class="warn">{{ message }}</div>{% endif %}
+<div id="job" data-poll="/job">{% include "job.html" %}</div>
+<table>
+<tr><th>Batch</th><th>Scope</th><th>State</th><th>Created</th><th>Journal</th><th></th></tr>
+{% for b in batches %}
+<tr><td>{{ b.id }}</td><td>{{ b.scope }}</td><td>{{ b.state }}</td><td>{{ b.created }}</td>
+<td>{% for k, n in b.counts.items() %}{{ k }} {{ n }}{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}</td>
+<td>{% if b.state in ("done", "interrupted") %}
+<form method="post" action="/history/{{ b.id }}/undo" data-ajax><button type="submit">Undo</button></form>{% endif %}</td></tr>
+{% else %}
+<tr><td colspan="6">No batches yet.</td></tr>
+{% endfor %}
+</table>
+
+<h2>Empty quarantine</h2>
+<p>This permanently deletes everything in the source's <code>_quarantine</code> folder and makes its batches impossible to undo.</p>
+<form method="post" action="/quarantine/empty">
+<label>Source <select name="source">{% for name in sources %}<option>{{ name }}</option>{% endfor %}</select></label>
+<label>Type EMPTY to confirm <input type="text" name="confirm" autocomplete="off"></label>
+<label><input type="checkbox" name="include_undone"> Also delete files set aside by undo (<code>_quarantine/_undone</code>)</label>
+<p><button type="submit">Empty quarantine</button></p>
+</form>
+{% endblock %}

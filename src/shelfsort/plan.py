@@ -149,6 +149,9 @@ def build_plan(
         )
 
     ids = [(d.file_id,) for d in decisions]
+    accepted = {  # collisions the user already accepted are not raised again
+        r[0]: True for r in conn.execute(
+            "select file_id from review_items where reason = 'collision' and resolved = 1")}
     with conn:  # one transaction; rolled back on exception
         conn.executemany("delete from plan_entries where file_id = ?", ids)
         conn.executemany(
@@ -168,6 +171,6 @@ def build_plan(
         conn.executemany(
             "insert into review_items(reason, file_id, resolved) "
             "values ('collision', ?, 0)",
-            [(f,) for f in collided],
+            [(f,) for f in collided if f not in accepted],
         )
     return entries

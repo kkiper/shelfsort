@@ -94,19 +94,13 @@ def _reason(item: _Item, threshold: float) -> str | None:
     return None
 
 
-def run_scan_pipeline(
-    conn: sqlite3.Connection, s: Settings, progress: Progress
-) -> PipelineSummary:
-    # --- scan
-    scan_sources(conn, s.sources, lambda n: progress("scan", n, 0))
-
-    # --- exact duplicates
-    progress("dedupe", 0, 1)
+def _load(
+    conn: sqlite3.Connection, s: Settings
+) -> tuple[list[_Item], list[sqlite3.Row]]:
+    """Live items (to identify/classify/plan) and exact-duplicate rows."""
     dups: set[int] = set()
     for _keeper, members in find_exact_duplicates(conn, vague_folders=s.vague_folders):
         dups.update(members)
-    progress("dedupe", 1, 1)
-
     marks = ",".join("?" * len(_SKIP))
     rows = conn.execute(
         f"select * from files where status not in ({marks}) order by id", _SKIP
@@ -115,6 +109,19 @@ def run_scan_pipeline(
     dup_rows = [r for r in rows if r["id"] in dups]
     live = [_Item(_record(r), os.path.basename(r["relpath"]))
             for r in rows if r["id"] not in dups]
+    return live, dup_rows
+
+
+def run_scan_pipeline(
+    conn: sqlite3.Connection, s: Settings, progress: Progress
+) -> PipelineSummary:
+    # --- scan
+    scan_sources(conn, s.sources, lambda n: progress("scan", n, 0))
+
+    # --- exact duplicates
+    progress("dedupe", 0, 1)
+    live, dup_rows = _load(conn, s)
+    progress("dedupe", 1, 1)
 
     # --- page counts
     pdfs = [it for it in live if it.rec.ext == "pdf" and it.rec.pages is None]
@@ -140,6 +147,41 @@ def run_scan_pipeline(
         _set_status(conn, it.rec.id, res.status)
         progress("identify", i, len(todo))
     conn.commit()
+    return _plan_stages(conn, s, live, dup_rows, progress)
+
+
+def replan(
+    conn: sqlite3.Connection, s: Settings, sources: dict[str, str] | None = None
+) -> PipelineSummary:
+    """Re-run classify, groups, plan and summary only (after review decisions)."""
+    if sources is not None:
+        s = Settings(**{**vars(s), "sources": dict(sources)})
+    live, dup_rows = _load(conn, s)
+    return _plan_stages(conn, s, live, dup_rows, lambda *_: None)
+
+
+def _overrides(conn: sqlite3.Connection) -> dict[int, tuple[str | None, str | None]]:
+    """Subject/kind chosen on resolved single-file review items."""
+    marks = ",".join("?" * len(_FILE_REASONS))
+    out: dict[int, tuple[str | None, str | None]] = {}
+    for r in conn.execute(
+        "select file_id, decision_json from review_items where resolved = 1"
+        f" and file_id is not null and decision_json is not null"
+        f" and reason in ({marks}) order by id", _FILE_REASONS):
+        try:
+            d = json.loads(r["decision_json"])
+        except ValueError:
+            continue
+        if isinstance(d, dict) and (d.get("subject") or d.get("kind")):
+            out[r["file_id"]] = (d.get("subject") or None, d.get("kind") or None)
+    return out
+
+
+def _plan_stages(
+    conn: sqlite3.Connection, s: Settings, live: list[_Item],
+    dup_rows: list[sqlite3.Row], progress: Progress,
+) -> PipelineSummary:
+    overrides = _overrides(conn)
 
     # --- classify
     marks = ",".join("?" * len(_FILE_REASONS))
@@ -155,6 +197,14 @@ def run_scan_pipeline(
             it.ident = best_identity(conn, rec.id)
             it.subject = classify_subject(rec.relpath, it.ident, it.filename, s)
             it.kind = classify_kind(it.ident, rec.ext, rec.pages, s)
+            subj_over, kind_over = overrides.get(rec.id, (None, None))
+            if subj_over:
+                it.subject = subj_over
+            if kind_over:
+                try:
+                    it.kind = Kind(kind_over)
+                except ValueError:
+                    pass
             below = it.ident is None or it.ident.confidence < s.confidence
             if below and it.kind is Kind.PLAN and it.subject is not None:
                 if it.ident is None:
@@ -200,12 +250,20 @@ def run_scan_pipeline(
     held |= {r[0] for r in conn.execute(
         "select gm.file_id from group_members gm join review_items ri"
         " on ri.group_id = gm.group_id where ri.resolved = 0")}
+    quarantined = {r[0] for r in conn.execute(
+        "select gm.file_id from group_members gm join review_items ri"
+        " on ri.group_id = gm.group_id where ri.resolved = 1"
+        " and gm.decision = 'quarantine'")}
     decisions: list[PlanInput] = []
     for it in live:
         r = it.rec
         if r.id in held:
             if r.status is not FileStatus.REVIEW and r.status is not FileStatus.UNREADABLE:
                 _set_status(conn, r.id, FileStatus.REVIEW)
+            continue
+        if r.id in quarantined:
+            decisions.append(PlanInput(r.id, r.source, r.relpath, r.ext, None,  # type: ignore[arg-type]
+                                       None, None, True))  # type: ignore[arg-type]
             continue
         if it.kind is None or it.subject is None or r.status is FileStatus.UNREADABLE:
             continue

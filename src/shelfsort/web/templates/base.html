@@ -12,11 +12,17 @@ td, th { border-bottom: 1px solid #ddd; padding: .3rem .5rem; text-align: left; 
 .warn { background: #fff3cd; padding: .4rem .8rem; margin: .4rem 0; }
 .error { background: #f8d7da; padding: .4rem .8rem; margin: .4rem 0; }
 textarea, input[type=text] { width: 100%; box-sizing: border-box; font: inherit; }
+table.plan td { word-break: break-all; }
+.card { border: 1px solid #ccc; padding: .5rem .8rem; margin: .6rem 0; }
+.card:focus, .member:focus-within { outline: 2px solid #36c; }
+.card img { max-height: 8rem; float: right; }
+.tabs a { margin-right: .8rem; }
+.tabs a.on { font-weight: 700; }
 label { display: block; margin-top: .8rem; font-weight: 600; }
 </style>
 </head>
 <body>
-<nav><strong>shelfsort</strong> &nbsp; <a href="/">Dashboard</a><a href="/settings">Settings</a></nav>
+<nav><strong>shelfsort</strong> &nbsp; <a href="/">Dashboard</a><a href="/review">Review</a><a href="/plan">Plan</a><a href="/history">History</a><a href="/settings">Settings</a></nav>
 {% block content %}{% endblock %}
 <script src="/static/app.js"></script>
 </body>

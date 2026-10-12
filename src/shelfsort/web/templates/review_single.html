@@ -1,0 +1,31 @@
+{% set f = card.file %}
+{% if card.reason == "collision" %}
+<form class="card" method="post" action="/review/{{ card.id }}/accept" tabindex="0" data-card>
+<strong>collision #{{ card.id }}</strong>
+{% if f.cover %}<img src="/files/{{ f.id }}/cover.png" alt="cover" loading="lazy">{% endif %}
+<div>{{ f.source }}: {{ f.relpath }}</div>
+<p>The planned name was already taken, so the plan adds a numeric suffix. Accept to keep it.</p>
+<button type="submit">Accept</button>
+</form>
+{% else %}
+<form class="card" method="post" action="/review/{{ card.id }}/single" tabindex="0" data-card>
+<strong>{{ card.reason }} #{{ card.id }}</strong>
+{% if f.cover %}<img src="/files/{{ f.id }}/cover.png" alt="cover" loading="lazy">{% endif %}
+<div>{{ f.source }}: {{ f.relpath }} <small>({{ f.ext }}{% if f.pages %}, {{ f.pages }} pages{% endif %})</small></div>
+<label>Title <input type="text" name="title" value="{{ f.ident.title or '' }}"></label>
+<label>Authors (comma separated) <input type="text" name="authors" value="{{ f.authors }}"></label>
+<label>Year <input type="text" name="year" value="{{ f.ident.year or '' }}"></label>
+<label>Publisher <input type="text" name="publisher" value="{{ f.ident.publisher or '' }}"></label>
+<label>ISBN <input type="text" name="isbn" value="{{ f.ident.isbn or '' }}"></label>
+<label>Magazine <input type="text" name="magazine" value="{{ f.ident.magazine or '' }}"></label>
+<label>Issue date (YYYY-MM) <input type="text" name="issue_date" value="{{ f.ident.issue_date or '' }}"></label>
+<label>Issue number <input type="text" name="issue_number" value="{{ f.ident.issue_number or '' }}"></label>
+<label>Cover story <input type="text" name="cover_story" value="{{ f.ident.cover_story or '' }}"></label>
+<label>Subject <input type="text" name="subject" value="{{ f.subject }}"></label>
+<label>Kind <select name="kind">
+<option value="">(automatic)</option>
+{% for k in card.kinds %}<option value="{{ k }}"{% if k == f.kind %} selected{% endif %}>{{ k }}</option>{% endfor %}
+</select></label>
+<button type="submit">Save</button>
+</form>
+{% endif %}

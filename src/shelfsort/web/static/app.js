@@ -23,4 +23,24 @@
         .finally(function () { location.reload(); });
     });
   });
+
+  // Review shortcuts: j/k move between cards, a accept, q quarantine the focused file, s save.
+  var cards = Array.prototype.slice.call(document.querySelectorAll("[data-card]"));
+  if (!cards.length) return;
+  document.addEventListener("keydown", function (e) {
+    var tag = e.target.tagName;
+    if (e.ctrlKey || e.metaKey || e.altKey || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    var cur = e.target.closest ? e.target.closest("[data-card]") : null;
+    if (e.key === "j" || e.key === "k") {
+      var i = cards.indexOf(cur) + (e.key === "j" ? 1 : -1);
+      cards[Math.max(0, Math.min(cards.length - 1, i))].focus();
+    } else if (cur && e.key === "q") {
+      var m = e.target.closest("[data-member]");
+      var r = m && m.querySelector('input[value="quarantine"]');
+      if (r) r.checked = true;
+    } else if (cur && (e.key === "a" || e.key === "s")) {
+      if (e.key === "a") cur.querySelectorAll('input[value="keep"]').forEach(function (k) { k.checked = true; });
+      cur.requestSubmit();
+    }
+  });
 })();

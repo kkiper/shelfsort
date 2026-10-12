@@ -1,0 +1,13 @@
+<form class="card" method="post" action="/review/{{ card.id }}/group" tabindex="0" data-card>
+<strong>{{ card.reason }} group #{{ card.id }}</strong>
+{% for m in card.members %}
+<div class="member" tabindex="0" data-member>
+{% if m.cover %}<img src="/files/{{ m.id }}/cover.png" alt="cover" loading="lazy">{% endif %}
+<div>{{ m.source }}: {{ m.relpath }} <small>({{ m.ext }}, {{ m.size }} bytes{% if m.pages %}, {{ m.pages }} pages{% endif %})</small></div>
+<div><small>{{ m.ident.title or "untitled" }}{% if m.authors %} by {{ m.authors }}{% endif %}{% if m.ident.magazine %} / {{ m.ident.magazine }}{% endif %}</small></div>
+<label><input type="radio" name="decisions[{{ m.id }}]" value="keep" checked> keep</label>
+<label><input type="radio" name="decisions[{{ m.id }}]" value="quarantine"> quarantine</label>
+</div>
+{% endfor %}
+<button type="submit">Save</button>
+</form>

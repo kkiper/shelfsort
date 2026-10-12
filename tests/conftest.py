@@ -218,3 +218,45 @@ def slow_job(monkeypatch):
     monkeypatch.setattr(routes_dashboard, "run_scan_pipeline", blocked)
     yield release
     release.set()
+
+
+@pytest.fixture
+def web(client_factory, tmp_source):
+    """A web client plus a DB connection and helpers to seed files and re-plan."""
+    import json
+    import os
+    from dataclasses import asdict
+    from types import SimpleNamespace
+
+    from shelfsort import pipeline
+    from shelfsort.models import Identity
+    from shelfsort.settings import Settings
+
+    client = client_factory(sources=tmp_source.sources)
+    wconn = db.connect(client.db_path)
+
+    def add(relpath, sha=None, ident=None, pages=None, status="new", data=b"x"):
+        path = tmp_source.write(relpath, data)
+        st = os.stat(path)
+        ext = relpath.rsplit(".", 1)[-1].lower()
+        cur = wconn.execute(
+            "insert into files(source, relpath, size, mtime, sha256, ext, pages, status) "
+            "values (?, ?, ?, ?, ?, ?, ?, ?)",
+            (tmp_source.name, relpath, st.st_size, st.st_mtime, sha or relpath, ext, pages, status))
+        if ident is not None:
+            ident.method = ident.method or "embedded"
+            wconn.execute(
+                "insert into identities(file_id, method, json, confidence) values (?, ?, ?, ?)",
+                (cur.lastrowid, ident.method, json.dumps(asdict(ident)), ident.confidence))
+        wconn.commit()
+        return cur.lastrowid
+
+    def replan():
+        return pipeline.replan(wconn, Settings(), tmp_source.sources)
+
+    def one(sql, *args):
+        return wconn.execute(sql, args).fetchone()
+
+    yield SimpleNamespace(client=client, conn=wconn, src=tmp_source, add=add,
+                          replan=replan, one=one)
+    wconn.close()

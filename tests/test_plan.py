@@ -126,3 +126,16 @@ def test_unknown_source_raises(conn, add_file, tmp_source):
     f = add_file("nowhere", "Woodworking/Z.pdf")
     with pytest.raises(KeyError):
         build_plan(conn, [pi(f, "Z", source="nowhere")], tmp_source.sources)
+
+
+def test_accepted_collision_is_not_raised_again(conn, add_file, tmp_source):
+    tmp_source.write("a/x.pdf")
+    f = add_file("remote", "a/x.pdf")
+    g = add_file("remote", "b/x.pdf")
+    conn.execute("insert into review_items(reason, file_id, resolved) values ('collision', ?, 1)", (g,))
+    conn.commit()
+    decisions = [pi(f, "x", relpath="a/x.pdf"), pi(g, "x", relpath="b/x.pdf")]
+    build_plan(conn, decisions, tmp_source.sources)
+    build_plan(conn, decisions, tmp_source.sources)
+    rows = conn.execute("select file_id, resolved from review_items where reason='collision'").fetchall()
+    assert [(r["file_id"], r["resolved"]) for r in rows] == [(g, 1)]

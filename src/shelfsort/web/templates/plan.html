@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Plan</h1>
+<form method="get" action="/plan">
+<label>Source <select name="source"><option value="">(all)</option>
+{% for v in facets.sources %}<option{% if v == scope.source %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+<label>Subject <select name="subject"><option value="">(all)</option>
+{% for v in facets.subjects %}<option{% if v == scope.subject %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+<label>Kind <select name="kind"><option value="">(all)</option>
+{% for v in facets.kinds %}<option{% if v == scope.kind %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+<p><button type="submit">Filter</button></p>
+</form>
+
+<form method="post" action="/apply" data-ajax>
+{% for k, v in scope.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+<button type="submit">Apply {{ total }} planned change(s){% if scope %} in this scope{% endif %}</button>
+</form>
+<div id="job" data-poll="/job">{% include "job.html" %}</div>
+
+<table class="plan">
+<tr><th>Current</th><th>Action</th><th>New path</th><th>Kind</th><th>Subject</th></tr>
+{% for r in rows %}
+<tr><td>{{ r.source }}: {{ r.relpath }}</td><td>{{ r.action }}</td><td>{{ r.target_relpath }}</td><td>{{ r.kind or "" }}</td><td>{{ r.subject or "" }}</td></tr>
+{% else %}
+<tr><td colspan="5">No planned changes.</td></tr>
+{% endfor %}
+</table>
+<p>{% if page > 1 %}<a href="/plan?page={{ page - 1 }}{% for k, v in scope.items() %}&amp;{{ k }}={{ v | urlencode }}{% endfor %}">Previous</a> {% endif %}
+{% if has_next %}<a href="/plan?page={{ page + 1 }}{% for k, v in scope.items() %}&amp;{{ k }}={{ v | urlencode }}{% endfor %}">Next</a>{% endif %}</p>
+{% endblock %}

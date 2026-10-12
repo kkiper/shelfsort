@@ -36,7 +36,10 @@ def effective_sources(s: Settings, sources_root: str) -> dict[str, str]:
 
 
 def create_app(db_path: str, sources_root: str = "/sources") -> FastAPI:
-    from shelfsort.web import routes_dashboard, routes_settings
+    from shelfsort.web import (
+        routes_dashboard, routes_files, routes_history, routes_plan, routes_review,
+        routes_settings,
+    )
 
     app = FastAPI(title="shelfsort")
     app.state.db_path = db_path
@@ -46,6 +49,8 @@ def create_app(db_path: str, sources_root: str = "/sources") -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static")
     app.include_router(routes_dashboard.router)
     app.include_router(routes_settings.router)
+    for module in (routes_review, routes_files, routes_plan, routes_history):
+        app.include_router(module.router)
 
     conn = db.connect(db_path)
     try:
