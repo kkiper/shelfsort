@@ -12,7 +12,7 @@ _TAIL_RE = re.compile(r"Anna['\u2019]s Archive$")
 _EXT_RE = re.compile(r"\.[A-Za-z0-9]{1,5}$")
 _YEAR_RE = re.compile(r"(?<!\d)(1[4-9]\d\d|20\d\d)(?!\d)")
 _YEAR_SEG_RE = re.compile(r"[\d, ]+")
-_ISBN_SEG_RE = re.compile(r"[\dXx-]+")
+_ISBN_SEG_RE = re.compile(r"[\dXx -]+")
 _MD5_RE = re.compile(r"[0-9a-fA-F]{32}")
 _NO_AUTHOR = {"unknown", "desconocido", "anonymous"}
 
@@ -42,7 +42,7 @@ def parse_annas(filename: str) -> Identity | None:
             continue
         if _ISBN_SEG_RE.fullmatch(seg) and valid_isbn(seg):
             if ident.isbn is None:
-                ident.isbn = re.sub(r"-", "", seg).upper()
+                ident.isbn = re.sub(r"[- ]", "", seg).upper()
             continue
         if _YEAR_SEG_RE.fullmatch(seg):
             m = _YEAR_RE.search(seg)

@@ -40,3 +40,13 @@ def test_stem_without_extension_and_first_publisher_only():
 def test_invalid_isbn_is_publisher_and_year_range():
     i = parse_annas("T -- A -- 1234567890 -- 1200 -- Anna's Archive.pdf")
     assert i.isbn is None and i.year is None and i.publisher == "1234567890"
+
+
+def test_space_separated_isbn13():
+    i = parse_annas("T -- A -- 978 1 4028 9462 6 -- Anna's Archive.pdf")
+    assert i.isbn == "9781402894626" and i.confidence == 0.95 and i.publisher is None
+
+
+def test_isbn10_lowercase_x_uppercased():
+    i = parse_annas("T -- A -- 080442957x -- Anna's Archive.pdf")
+    assert i.isbn == "080442957X" and i.publisher is None
