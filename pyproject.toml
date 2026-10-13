@@ -31,5 +31,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = ["tools: needs Calibre/Tesseract/Ollama; run in container"]
 filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]
