@@ -30,9 +30,11 @@ RUN wget -nv -O /tmp/calibre-install.sh https://download.calibre-ebook.com/linux
     && rm /tmp/calibre-install.sh \
     && ebook-meta --version && fetch-ebook-metadata --version
 
-# Fail the build if Calibre's bundled Qt lacks a system library.
+# Fail the build if Calibre's bundled Qt lacks a system library. Calibre ships
+# some libraries (libiconv, ICU) in /opt/calibre/lib and finds them via its
+# executables' RUNPATH, so put that directory on the search path for ldd.
 RUN if [ -f /opt/calibre/lib/libQt6Gui.so.6 ]; then \
-        if ldd /opt/calibre/lib/libQt6Gui.so.6 | grep "not found"; then \
+        if LD_LIBRARY_PATH=/opt/calibre/lib ldd /opt/calibre/lib/libQt6Gui.so.6 | grep "not found"; then \
             echo "missing libraries for Calibre Qt6" >&2; exit 1; \
         fi; \
     else echo "WARNING: /opt/calibre/lib/libQt6Gui.so.6 not found; skipping ldd check" >&2; fi
